@@ -71,10 +71,8 @@ class ConsumerAgent(Agent):
     
     def _purchase_from_retailers(self):
         """Attempt to purchase goods from retailers."""
-        # Find retailers
-        retailers = [agent for agent in self.model.schedule.agents 
-                    if hasattr(agent, 'sell_to_consumer')]
-        
+        retailers = self.model.retailers
+
         if not retailers:
             self.unfulfilled_demand = self.current_demand
             return

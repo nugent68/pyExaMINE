@@ -67,10 +67,7 @@ class RetailerAgent(Agent):
     
     def _place_order(self):
         """Place an order with manufacturers."""
-        # Find manufacturers with available output
-        manufacturers = [agent for agent in self.model.schedule.agents 
-                        if hasattr(agent, 'get_available_output')]
-        
+        manufacturers = self.model.manufacturers
         remaining = self.order_quantity
         
         for manufacturer in manufacturers:

@@ -5,7 +5,16 @@ Configuration for Lithium supply chain simulation.
 LITHIUM_CONFIG = {
     # Mineral identification
     "mineral_type": "Lithium",
-    
+
+    # Fallback annual mineral demand (tonnes/year) used only if the USGS
+    # demand column for this mineral is absent. USGS_CMM.csv currently
+    # supplies Lithium_Global_Demand_2024 (128 kt), so this fallback is
+    # informational unless the column is removed.
+    "default_annual_demand_tons": 128001.0,
+
+    # USGS_CMM.csv reports Lithium production and reserves in tonnes already.
+    "usgs_units_to_tons": 1.0,
+
     # Price parameters ($/ton)
     "initial_price": 17000,
     "price_floor": 6800,      # 40% of initial

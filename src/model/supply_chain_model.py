@@ -85,43 +85,96 @@ class MineralSupplyChainModel(Model):
         """Load USGS data and create all agents."""
         # Load mineral-specific data
         mines_data, demand_data = load_mineral_data(self.mineral_type, csv_path)
-        
+
+        # Resolve baseline annual mineral demand (tonnes/year), then derive
+        # per-step mineral and product demand once for use across creators.
+        self._resolve_baseline_demand(demand_data)
+
         # Create mines from USGS data
         self._create_mines(mines_data)
-        
+
         # Create processors
         self._create_processors()
-        
+
         # Create transport agents
         self._create_transport()
-        
+
         # Create manufacturers
         self._create_manufacturers()
-        
+
         # Create retailers
         self._create_retailers()
-        
+
         # Create consumers
-        self._create_consumers(demand_data)
-        
+        self._create_consumers()
+
         # Create recyclers
         self._create_recyclers()
+
+    def _resolve_baseline_demand(self, demand_data):
+        """Resolve baseline annual mineral demand (tonnes/year).
+
+        USGS demand columns are in kilotonnes/year while production columns
+        are in tonnes/year, so we rescale kt -> t. If the mineral has no
+        demand column (e.g., Platinum), fall back to
+        config['default_annual_demand_tons'].
+        """
+        baseline_demand_tons_per_year = 0.0
+        if demand_data:
+            for key, value in demand_data.items():
+                if '2024' in str(key) and value > 0:
+                    baseline_demand_tons_per_year = value * 1000.0
+                    print(f"Using USGS 2024 demand: {baseline_demand_tons_per_year:,.0f} tons/year")
+                    break
+
+        if baseline_demand_tons_per_year <= 0:
+            baseline_demand_tons_per_year = self.config.get(
+                'default_annual_demand_tons', 100000.0
+            )
+            print(f"No USGS 2024 demand found; using config default: "
+                  f"{baseline_demand_tons_per_year:,.0f} tons/year")
+
+        steps_per_year = self.config.get('steps_per_year', 52)
+        mineral_intensity = self.config.get('manufacturer_mineral_intensity', 0.08)
+
+        self.baseline_mineral_demand_tons_per_year = baseline_demand_tons_per_year
+        self.baseline_mineral_demand_per_step = (
+            baseline_demand_tons_per_year / steps_per_year
+        )
+        self.baseline_product_demand_per_step = (
+            self.baseline_mineral_demand_per_step / mineral_intensity
+        )
+
+        print(f"Mineral demand: {self.baseline_mineral_demand_per_step:,.2f} tons/step "
+              f"-> Product demand: {self.baseline_product_demand_per_step:,.2f} units/step")
     
     def _create_mines(self, mines_data):
-        """Create mine agents from USGS data."""
+        """Create mine agents from USGS data.
+
+        Two rescalings happen here:
+        1. usgs_units_to_tons: USGS_CMM.csv reports Platinum production and
+           reserves in kilograms while Lithium and Nickel use tonnes. The
+           per-mineral config supplies the conversion factor (default 1.0).
+        2. steps_per_year: production_capacity is an annual flow in the
+           source data and a per-step capacity in the agent.
+        Reserves are stocks, so they only get rescaled by units_to_tons.
+        """
+        steps_per_year = self.config.get('steps_per_year', 52)
+        units_to_tons = self.config.get('usgs_units_to_tons', 1.0)
+
         for i, mine_params in enumerate(mines_data):
             mine = MineAgent(
                 unique_id=self.next_id(),
                 model=self,
                 jurisdiction=mine_params['jurisdiction'],
                 ore_grade=mine_params['ore_grade'],
-                production_capacity=mine_params['production_capacity'],
+                production_capacity=mine_params['production_capacity'] * units_to_tons / steps_per_year,
                 extraction_cost=mine_params['extraction_cost'],
-                reserves=mine_params['reserves']
+                reserves=mine_params['reserves'] * units_to_tons
             )
             self.schedule.add(mine)
             self.mines.append(mine)
-        
+
         print(f"Created {len(self.mines)} mines")
     
     def _create_processors(self):
@@ -180,14 +233,21 @@ class MineralSupplyChainModel(Model):
         print(f"Created {len(self.transport_agents)} transport agents")
     
     def _create_manufacturers(self):
-        """Create manufacturer agents."""
+        """Create manufacturer agents.
+
+        Capacity is sized from the baseline product demand per step (with a
+        small headroom multiplier) rather than from inverted processor
+        capacity. The previous formula divided by mineral_intensity, which
+        produced absurdly large capacity for low-intensity minerals (Pt).
+        """
         n_manufacturers = self.config.get("n_manufacturers", 8)
         mineral_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
-        
-        # Estimate production capacity from processor capacity
-        total_processor_capacity = sum(p.capacity * p.conversion_efficiency for p in self.processors)
-        manufacturer_capacity = total_processor_capacity / (n_manufacturers * mineral_intensity)
-        
+        capacity_headroom = self.config.get("manufacturer_capacity_headroom", 1.5)
+
+        manufacturer_capacity = (
+            self.baseline_product_demand_per_step * capacity_headroom / n_manufacturers
+        )
+
         for i in range(n_manufacturers):
             manufacturer = ManufacturerAgent(
                 unique_id=self.next_id(),
@@ -197,23 +257,26 @@ class MineralSupplyChainModel(Model):
             )
             self.schedule.add(manufacturer)
             self.manufacturers.append(manufacturer)
-        
-        print(f"Created {len(self.manufacturers)} manufacturers")
+
+        print(f"Created {len(self.manufacturers)} manufacturers "
+              f"(capacity ~{manufacturer_capacity:,.2f} units/step each)")
     
     def _create_retailers(self):
-        """Create retailer agents."""
+        """Create retailer agents.
+
+        Reorder point and order quantity are sized from per-retailer baseline
+        product demand, not from inflated manufacturer capacity.
+        """
         n_retailers = self.config.get("n_retailers", 12)
-        
-        # Calculate reorder parameters
-        total_manufacturer_capacity = sum(m.production_capacity for m in self.manufacturers)
-        avg_demand_per_retailer = total_manufacturer_capacity / n_retailers
-        
+
+        avg_demand_per_retailer = self.baseline_product_demand_per_step / n_retailers
+
         reorder_multiplier = self.config.get("retailer_reorder_point_multiplier", 2.0)
         order_multiplier = self.config.get("retailer_order_quantity_multiplier", 3.0)
-        
+
         reorder_point = avg_demand_per_retailer * reorder_multiplier
         order_quantity = avg_demand_per_retailer * order_multiplier
-        
+
         for i in range(n_retailers):
             retailer = RetailerAgent(
                 unique_id=self.next_id(),
@@ -223,43 +286,21 @@ class MineralSupplyChainModel(Model):
             )
             self.schedule.add(retailer)
             self.retailers.append(retailer)
-        
-        print(f"Created {len(self.retailers)} retailers")
+
+        print(f"Created {len(self.retailers)} retailers "
+              f"(reorder_point={reorder_point:,.2f}, Q={order_quantity:,.2f})")
     
-    def _create_consumers(self, demand_data):
-        """Create consumer agents."""
+    def _create_consumers(self):
+        """Create consumer agents using the precomputed baseline demand."""
         n_consumers = self.config.get("n_consumers", 100)
         price_sensitivity = self.config.get("consumer_price_sensitivity", -0.8)
-        
-        # Get baseline demand from USGS data
-        # Look for 2024 demand value (keys like '2024_', '2024_NetZero', etc.)
-        baseline_demand = 100000  # Default fallback
-        
-        if demand_data:
-            # Find any key containing '2024'
-            for key, value in demand_data.items():
-                if '2024' in str(key) and value > 0:
-                    baseline_demand = value
-                    print(f"Using USGS 2024 demand: {baseline_demand:,.0f} tons/year")
-                    break
-        
-        # Convert to per-step demand (assuming 52 steps per year)
-        # USGS data is in tons of MINERAL per year
-        # Consumer demand should be in tons of PRODUCT per step
-        # Product contains mineral based on mineral_intensity
-        steps_per_year = self.config.get("steps_per_year", 52)
-        mineral_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
-        
-        # Convert mineral demand to product demand
-        mineral_demand_per_step = baseline_demand / steps_per_year
-        product_demand_per_step = mineral_demand_per_step / mineral_intensity
-        
-        # Distribute among consumers
-        base_demand_per_consumer = product_demand_per_step / n_consumers
-        
-        print(f"Mineral demand: {mineral_demand_per_step:,.2f} tons/step -> Product demand: {product_demand_per_step:,.2f} units/step")
+
+        base_demand_per_consumer = (
+            self.baseline_product_demand_per_step / n_consumers
+        )
+
         print(f"Per consumer: {base_demand_per_consumer:,.4f} units/step")
-        
+
         for i in range(n_consumers):
             consumer = ConsumerAgent(
                 unique_id=self.next_id(),
@@ -269,7 +310,7 @@ class MineralSupplyChainModel(Model):
             )
             self.schedule.add(consumer)
             self.consumers.append(consumer)
-        
+
         print(f"Created {len(self.consumers)} consumers")
     
     def _create_recyclers(self):
@@ -377,72 +418,65 @@ class MineralSupplyChainModel(Model):
         print(f"Geopolitical event! {affected} disrupted for {duration} steps")
     
     def _update_price(self):
-        """Update global price based on market conditions."""
-        # Calculate total processor inventory (tons of mineral)
+        """Update global price based on weeks-of-inventory at processors.
+
+        Uses raw inventory rather than inventory net of safety stock; the old
+        net-of-safety-stock signal was almost always zero and produced a
+        permanent shortage signal.
+        """
         total_inventory = sum(p.inventory for p in self.processors)
-        
-        # Calculate total demand in MINERAL tons (not product units)
-        # Consumers demand products, need to convert to mineral content
+
+        # Convert current product demand to mineral tons using live
+        # manufacturer intensity (so substitution feeds back into price).
         total_product_demand = sum(c.current_demand for c in self.consumers)
-        
-        # Convert product demand to mineral demand using mineral intensity
-        # Get current average mineral intensity from manufacturers
         if self.manufacturers:
             avg_intensity = sum(m.mineral_intensity for m in self.manufacturers) / len(self.manufacturers)
         else:
             avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
-        
-        mineral_demand = total_product_demand * avg_intensity
-        mineral_demand = mineral_demand if mineral_demand > 0 else 1.0
-        
-        # Use AVAILABLE inventory (above safety stock) for price calculation
-        # This prevents zero-inventory spikes from causing false shortages
-        total_available_inventory = sum(p.get_available_inventory() for p in self.processors)
-        
-        # Add minimum threshold: don't let ratio go to zero even if inventory is low
-        effective_inventory = max(total_available_inventory, mineral_demand * 0.1)
-        
-        # Update price based on mineral inventory vs mineral demand
+        mineral_demand = max(total_product_demand * avg_intensity, 1e-9)
+
+        shortage_weeks = self.config.get("price_shortage_weeks", 4.0)
+        surplus_weeks = self.config.get("price_surplus_weeks", 12.0)
+
         self.current_price = update_price(
             self.current_price,
-            effective_inventory,
+            total_inventory,
             mineral_demand,
             self.price_floor,
-            self.price_ceiling
+            self.price_ceiling,
+            shortage_weeks=shortage_weeks,
+            surplus_weeks=surplus_weeks,
         )
     
-    def add_to_eol_pool(self, quantity):
-        """Add quantity to end-of-life pool for future recycling.
-        
-        Args:
-            quantity: Amount to add (units of product)
+    def add_to_eol_pool(self, product_units):
+        """Add sold products to the EOL pool, stored as contained mineral tons.
+
+        We multiply by the manufacturer intensity at the moment of sale so
+        recyclers later collect the correct mineral mass even if intensity
+        shifts due to substitution between sale and end-of-life.
         """
-        # Schedule for collection after product lifetime
+        if product_units <= 0:
+            return
+
+        if self.manufacturers:
+            avg_intensity = sum(m.mineral_intensity for m in self.manufacturers) / len(self.manufacturers)
+        else:
+            avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
+
+        mineral_tons = product_units * avg_intensity
         future_step = self.current_step + self.product_lifetime
-        self.end_of_life_pool[future_step] = self.end_of_life_pool.get(future_step, 0) + quantity
-        
-        # Debug: track EOL additions
-        if self.current_step < 10 or self.current_step % 100 == 0:
-            total_in_pool = sum(self.end_of_life_pool.values())
-            if quantity > 0:
-                print(f"  [EOL] Step {self.current_step}: Added {quantity:.2f} products to pool (step {future_step}), total in pool: {total_in_pool:.2f}")
-    
+        self.end_of_life_pool[future_step] = (
+            self.end_of_life_pool.get(future_step, 0) + mineral_tons
+        )
+
     def get_eol_materials(self):
-        """Get end-of-life materials available for collection this step.
-        
-        Returns:
-            Quantity available for recycling
-        """
+        """Return contained-mineral tons due for collection this step."""
         return self.end_of_life_pool.get(self.current_step, 0)
-    
-    def remove_from_eol_pool(self, quantity):
-        """Remove collected materials from EOL pool.
-        
-        Args:
-            quantity: Amount collected
-        """
+
+    def remove_from_eol_pool(self, mineral_tons):
+        """Remove collected mineral tons from this step's EOL bucket."""
         current = self.end_of_life_pool.get(self.current_step, 0)
-        self.end_of_life_pool[self.current_step] = max(0, current - quantity)
+        self.end_of_life_pool[self.current_step] = max(0, current - mineral_tons)
     
     def run_model(self, n_steps=None):
         """Run the model for a specified number of steps.

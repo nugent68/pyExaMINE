@@ -57,15 +57,11 @@ class ProcessorAgent(Agent):
     
     def _purchase_ore(self):
         """Purchase ore from available mines."""
-        # Get all operational mines
-        mines = [agent for agent in self.model.schedule.agents 
-                if hasattr(agent, 'get_available_supply')]
-        
+        mines = self.model.mines
         if not mines:
             return
-        
-        # Rank mines by cost (extraction_cost + transport_cost)
-        # Simplified: assume transport cost based on distance proxy
+
+        # Rank mines by cost (cheapest first).
         ranked_mines = sorted(mines, key=lambda m: m.extraction_cost)
         
         # Purchase from cheapest sources up to capacity

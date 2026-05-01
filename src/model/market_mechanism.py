@@ -6,40 +6,38 @@ Handles global price dynamics and geopolitical events.
 import random
 
 
-def update_price(current_price, total_inventory, average_demand, price_floor, price_ceiling):
-    """Update global price based on supply/demand ratio.
-    
+def update_price(current_price, total_inventory, demand_per_step,
+                 price_floor, price_ceiling,
+                 shortage_weeks=4.0, surplus_weeks=12.0,
+                 step_pct=0.05):
+    """Update global price based on weeks-of-inventory.
+
     Args:
-        current_price: Current price ($/ton)
-        total_inventory: Total processor inventory (tons)
-        average_demand: Average consumer demand (tons/step)
-        price_floor: Minimum price
-        price_ceiling: Maximum price
-    
+        current_price: Current price ($/ton).
+        total_inventory: Total mineral inventory (tons).
+        demand_per_step: Mineral demand per step (tons/step).
+        price_floor: Minimum price.
+        price_ceiling: Maximum price.
+        shortage_weeks: Below this many weeks of cover, price rises.
+        surplus_weeks: Above this many weeks of cover, price falls.
+        step_pct: Price adjustment fraction per step.
+
     Returns:
-        Updated price
+        Updated price.
     """
-    # Calculate inventory-to-demand ratio
-    if average_demand > 0:
-        inventory_ratio = total_inventory / average_demand
+    if demand_per_step > 0:
+        weeks_of_inventory = total_inventory / demand_per_step
     else:
-        inventory_ratio = 1.0
-    
-    # Price adjustment based on ratio
-    if inventory_ratio < 0.5:
-        # Supply shortage: price increases 5%
-        new_price = current_price * 1.05
-    elif inventory_ratio > 1.5:
-        # Oversupply: price decreases 5%
-        new_price = current_price * 0.95
+        weeks_of_inventory = (shortage_weeks + surplus_weeks) / 2.0
+
+    if weeks_of_inventory < shortage_weeks:
+        new_price = current_price * (1.0 + step_pct)
+    elif weeks_of_inventory > surplus_weeks:
+        new_price = current_price * (1.0 - step_pct)
     else:
-        # Balanced: no change
         new_price = current_price
-    
-    # Bound price
-    new_price = max(price_floor, min(new_price, price_ceiling))
-    
-    return new_price
+
+    return max(price_floor, min(new_price, price_ceiling))
 
 
 def check_geopolitical_event(probability, random_state=None):

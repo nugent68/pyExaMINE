@@ -78,15 +78,18 @@ class MineAgent(Agent):
             return current_price > self.extraction_cost
     
     def _produce(self):
-        """Produce minerals for this step."""
-        # Calculate production amount
-        raw_ore = min(self.production_capacity, self.reserves)
-        pure_mineral = raw_ore * self.ore_grade
-        
-        # Update reserves and tracking
-        self.reserves -= raw_ore
-        self.production_this_step = pure_mineral
-        self.cumulative_production += pure_mineral
+        """Produce minerals for this step.
+
+        USGS production figures are reported as contained-mineral output, so
+        production_capacity is already in tonnes of mineral. Refining yield
+        loss is modeled separately on the processor side via conversion_efficiency.
+        ore_grade is retained as metadata for cost/reporting only.
+        """
+        output = min(self.production_capacity, self.reserves)
+
+        self.reserves -= output
+        self.production_this_step = output
+        self.cumulative_production += output
         
         # Offer production to processors (handled by model's market mechanism)
     

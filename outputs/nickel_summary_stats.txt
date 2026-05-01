@@ -2,26 +2,26 @@
 Supply Chain Model Summary: Nickel
 ============================================================
 
-Simulation Length: 1248 steps
+Simulation Length: 200 steps
 
 PRICE DYNAMICS:
-  Average Price: $53,059.52/ton
-  Final Price: $54,000.00/ton
-  Price Volatility (std): $4,239.91
+  Average Price: $9,348.14/ton
+  Final Price: $8,778.15/ton
+  Price Volatility (std): $1,599.71
 
 SUPPLY:
-  Average Mine Output: 20,741.91 tons/step
-  Average Recycled Supply: 0.93 tons/step
-  Recycling Rate: 0.00%
-  Average Processor Inventory: 4,857.61 tons
+  Average Mine Output: 7,963.15 tons/step
+  Average Recycled Supply: 2,501.92 tons/step
+  Recycling Rate: 23.91%
+  Average Processor Inventory: 173,699.27 tons
 
 DEMAND:
-  Total Demand: 82,656.51 tons
-  Fulfillment Rate: 100.00%
+  Total Demand: 86,217,260.62 tons
+  Fulfillment Rate: 46.35%
 
 DISRUPTIONS:
-  Average Disrupted Mines: 0.73
+  Average Disrupted Mines: 6.45
 
 SUBSTITUTION:
-  Final Mineral Intensity: 0.028000 tons/unit
-  Intensity Reduction: 30.00%
+  Final Mineral Intensity: 0.040000 tons/unit
+  Intensity Reduction: 0.00%

@@ -38,78 +38,49 @@ class RecyclingAgent(Agent):
         """Execute one time step of recycling behavior."""
         self.recycled_this_step = 0
         self.collected_this_step = 0
-        
-        # 1. Collect from end-of-life pool
+
+        # 1. Collect from end-of-life pool (raw mineral tons)
         self._collect_eol_materials()
-        
-        # 2. Process collected materials
-        self._process_materials()
-        
-        # 3. Sell recovered materials to processors if profitable
+
+        # 2. Sell from storage to processors if profitable.
+        #    recovery_efficiency is applied at the moment of sale, so material
+        #    that sits in storage waiting for a profitable price is not
+        #    repeatedly degraded by the efficiency factor.
         self._sell_recovered_materials()
-    
+
     def _collect_eol_materials(self):
-        """Collect materials from the end-of-life pool."""
-        # Get materials from EOL pool with product lifetime lag (in product units)
-        available_eol_products = self.model.get_eol_materials()
-        
-        if available_eol_products > 0:
-            # Collect a fraction
-            collected_products = available_eol_products * self.collection_rate
-            
-            # Convert products to mineral content
-            # Products contain mineral based on manufacturer's intensity
-            mineral_intensity = self.model.config.get("manufacturer_mineral_intensity", 0.08)
-            collected_mineral = collected_products * mineral_intensity
-            
-            self.storage += collected_mineral
-            self.collected_this_step = collected_mineral
-            
-            # Remove from EOL pool
-            self.model.remove_from_eol_pool(collected_products)
-    
-    def _process_materials(self):
-        """Process collected materials to recover pure mineral."""
+        """Collect a fraction of this step's EOL materials (mineral tons)."""
+        available_mineral_tons = self.model.get_eol_materials()
+        if available_mineral_tons <= 0:
+            return
+
+        collected_mineral = available_mineral_tons * self.collection_rate
+        self.storage += collected_mineral
+        self.collected_this_step = collected_mineral
+        self.model.remove_from_eol_pool(collected_mineral)
+
+    def _sell_recovered_materials(self):
+        """Process and sell stored material when profitable."""
         if self.storage <= 0:
             return
-        
-        # Process all storage and apply recovery efficiency
-        recovered_mineral = self.storage * self.recovery_efficiency
-        
-        # Clear storage
-        self.storage = 0
-        
-        # Track for reporting (don't clear this until next step!)
-        self.recycled_this_step = recovered_mineral
-    
-    def _sell_recovered_materials(self):
-        """Sell recovered materials to processors if profitable."""
-        if self.recycled_this_step <= 0:
+
+        if self.model.current_price <= self.processing_cost:
+            # Hold raw material in storage until the price recovers.
             return
-        
-        # Check profitability
-        revenue_per_ton = self.model.current_price
-        
-        # Only sell if revenue > cost
-        if revenue_per_ton > self.processing_cost:
-            # Use model's processor list directly
-            processors = self.model.processors
-            
-            if processors:
-                # Distribute equally (simplified)
-                amount_per_processor = self.recycled_this_step / len(processors)
-                
-                for processor in processors:
-                    # Inject recovered mineral into processor inventory
-                    processor.inventory += amount_per_processor
-                    self.total_recycled += amount_per_processor
-                
-                # Don't clear recycled_this_step here - it needs to be reported!
-                # It will be reset at the start of next step()
-        else:
-            # Price too low, accumulate in storage for later
-            self.storage += self.recycled_this_step
-            self.recycled_this_step = 0
+
+        recovered = self.storage * self.recovery_efficiency
+        self.storage = 0
+
+        processors = self.model.processors
+        if not processors or recovered <= 0:
+            return
+
+        amount_per_processor = recovered / len(processors)
+        for processor in processors:
+            processor.inventory += amount_per_processor
+
+        self.recycled_this_step = recovered
+        self.total_recycled += recovered
     
     def get_recycled_supply(self):
         """Get the amount recycled this step."""

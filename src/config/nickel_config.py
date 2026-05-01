@@ -5,7 +5,16 @@ Configuration for Nickel supply chain simulation.
 NICKEL_CONFIG = {
     # Mineral identification
     "mineral_type": "Nickel",
-    
+
+    # Fallback annual mineral demand (tonnes/year) used only if the USGS
+    # demand column for this mineral is absent. USGS_CMM.csv currently
+    # supplies Nickel_Global_Demand_2024 (562 kt), so this fallback is
+    # informational unless the column is removed.
+    "default_annual_demand_tons": 561724.0,
+
+    # USGS_CMM.csv reports Nickel production and reserves in tonnes already.
+    "usgs_units_to_tons": 1.0,
+
     # Price parameters ($/ton)
     "initial_price": 18000,
     "price_floor": 7200,      # 40% of initial
