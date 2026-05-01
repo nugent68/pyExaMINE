@@ -75,7 +75,20 @@ def parse_arguments():
         action='store_true',
         help='Skip visualization generation'
     )
-    
+
+    parser.add_argument(
+        '--embargo',
+        action='append',
+        default=None,
+        metavar='COUNTRY:START_STEP:DURATION',
+        help=(
+            'Schedule a political embargo. Format COUNTRY:START_STEP:DURATION '
+            '(e.g., "Chile:624:52" -> Chile withholds exports starting step '
+            '624 for 52 steps). May be repeated for multiple embargoes. '
+            'Country must match the jurisdiction string in USGS_CMM.csv.'
+        ),
+    )
+
     args = parser.parse_args()
     
     # Validate arguments
@@ -103,10 +116,46 @@ def get_config(mineral_name):
     return configs.get(mineral_name.lower())
 
 
-def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None, 
-                       output_dir='outputs', generate_viz=True):
+def _parse_embargo_specs(specs):
+    """Parse a list of "COUNTRY:START_STEP:DURATION" strings.
+
+    Returns a list of dicts in the schema expected by
+    MineralSupplyChainModel (config['political_embargoes']).
+    """
+    if not specs:
+        return []
+    parsed = []
+    for spec in specs:
+        parts = spec.rsplit(':', 2)  # rsplit so country names with ':' would still parse
+        if len(parts) != 3:
+            raise ValueError(
+                f"Invalid --embargo value '{spec}'. "
+                f"Expected COUNTRY:START_STEP:DURATION (e.g., Chile:624:52)."
+            )
+        country, start_step, duration = parts
+        try:
+            start_step = int(start_step)
+            duration = int(duration)
+        except ValueError as e:
+            raise ValueError(f"Invalid --embargo value '{spec}': {e}")
+        if duration <= 0 or start_step < 0:
+            raise ValueError(
+                f"Invalid --embargo value '{spec}': start_step must be >=0, "
+                f"duration must be >0."
+            )
+        parsed.append({
+            'country': country.strip(),
+            'start_step': start_step,
+            'duration': duration,
+        })
+    return parsed
+
+
+def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
+                       output_dir='outputs', generate_viz=True,
+                       embargoes=None):
     """Run simulation for a single mineral.
-    
+
     Args:
         mineral_name: Name of mineral
         n_steps: Number of steps to run
@@ -114,19 +163,20 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
         seed: Random seed
         output_dir: Output directory
         generate_viz: Whether to generate visualizations
-    
+        embargoes: Optional list of political-embargo dicts to add to config
+
     Returns:
         Model instance
     """
     print(f"\n{'='*70}")
     print(f"RUNNING {mineral_name.upper()} SIMULATION")
     print(f"{'='*70}")
-    
+
     # Get configuration
     config = get_config(mineral_name)
     if config is None:
         raise ValueError(f"Unknown mineral: {mineral_name}")
-    
+
     # Override config parameters if specified
     config = config.copy()
     if n_steps is not None:
@@ -135,6 +185,9 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
         config['geopolitical_event_probability'] = geo_prob
     if seed is not None:
         config['random_seed'] = seed
+    if embargoes:
+        # Append to (rather than replace) any embargoes already in the config.
+        config['political_embargoes'] = list(config.get('political_embargoes', [])) + list(embargoes)
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -173,30 +226,35 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
     return model
 
 
-def run_all_minerals(n_steps=None, geo_prob=None, seed=None, 
-                     output_dir='outputs', generate_viz=True):
+def run_all_minerals(n_steps=None, geo_prob=None, seed=None,
+                     output_dir='outputs', generate_viz=True,
+                     embargoes=None):
     """Run simulations for all three minerals.
-    
+
     Args:
         n_steps: Number of steps to run
         geo_prob: Geopolitical event probability
         seed: Random seed
         output_dir: Output directory
         generate_viz: Whether to generate visualizations
-    
+        embargoes: Optional list of political-embargo dicts (applied to
+            every mineral; mines whose jurisdiction does not appear in
+            that mineral's data simply ignore the entry).
+
     Returns:
         Dictionary of model instances
     """
     minerals = ['lithium', 'nickel', 'platinum']
     models = {}
-    
+
     print(f"\n{'='*70}")
     print(f"RUNNING ALL MINERAL SIMULATIONS")
     print(f"{'='*70}")
-    
+
     for mineral in minerals:
         models[mineral] = run_single_mineral(
-            mineral, n_steps, geo_prob, seed, output_dir, generate_viz
+            mineral, n_steps, geo_prob, seed, output_dir, generate_viz,
+            embargoes=embargoes,
         )
     
     print(f"\n{'='*70}")
@@ -222,6 +280,10 @@ def main():
     print(f"  Output dir: {args.output_dir}")
     print(f"  Generate visualizations: {not args.no_viz}")
     
+    embargoes = _parse_embargo_specs(args.embargo)
+    if embargoes:
+        print(f"  Embargoes: {embargoes}")
+
     try:
         if args.all:
             # Run all minerals
@@ -230,7 +292,8 @@ def main():
                 geo_prob=args.geo_prob,
                 seed=args.seed,
                 output_dir=args.output_dir,
-                generate_viz=not args.no_viz
+                generate_viz=not args.no_viz,
+                embargoes=embargoes,
             )
         else:
             # Run single mineral
@@ -240,7 +303,8 @@ def main():
                 geo_prob=args.geo_prob,
                 seed=args.seed,
                 output_dir=args.output_dir,
-                generate_viz=not args.no_viz
+                generate_viz=not args.no_viz,
+                embargoes=embargoes,
             )
         
         print("\n✓ Simulation successful!")

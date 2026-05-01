@@ -59,6 +59,13 @@ class MineralSupplyChainModel(Model):
         
         # Geopolitical event tracking
         self.active_disruptions = {}  # jurisdiction -> remaining_steps
+
+        # Political-embargo tracking (separate from random geopolitical
+        # disruptions): a country can withhold its mine output from the
+        # international market for a fixed duration. Mines in the country
+        # continue to extract; output goes to a domestic stockpile.
+        self.scheduled_embargoes = list(config.get("political_embargoes", []))
+        self.active_embargoes = {}  # jurisdiction -> remaining_steps
         
         # Agent lists for easy access
         self.mines = []
@@ -345,23 +352,29 @@ class MineralSupplyChainModel(Model):
                 "Unfulfilled_Demand": lambda m: sum(a.unfulfilled_demand for a in m.consumers),
                 "Avg_Manufacturer_Intensity": lambda m: np.mean([a.mineral_intensity for a in m.manufacturers]) if m.manufacturers else 0,
                 "Total_Reserves": lambda m: sum(a.reserves for a in m.mines),
+                "Embargoed_Mines_Count": lambda m: sum(1 for a in m.mines if m.is_embargoed(a.jurisdiction)),
+                "Total_Embargoed_Production": lambda m: sum(a.embargoed_production_this_step for a in m.mines),
+                "Total_Domestic_Stockpile": lambda m: sum(a.domestic_stockpile for a in m.mines),
             }
         )
     
     def step(self):
         """Execute one time step of the model."""
-        # 1. Check for geopolitical events
+        # 1. Check for geopolitical events (random) and political
+        #    embargoes (scheduled). Order matters only in that we want
+        #    both states resolved before any mine reads them.
         self._check_geopolitical_events()
-        
+        self._check_political_embargoes()
+
         # 2. Activate all agents in random order
         self.schedule.step()
-        
+
         # 3. Update global price based on supply/demand
         self._update_price()
-        
+
         # 4. Collect data
         self.datacollector.collect(self)
-        
+
         # 5. Increment step counter
         self.current_step += 1
     
@@ -384,6 +397,46 @@ class MineralSupplyChainModel(Model):
         if check_geopolitical_event(geo_prob, self.random_state):
             self._trigger_geopolitical_event()
     
+    def _check_political_embargoes(self):
+        """Tick existing embargoes and start any scheduled to begin now.
+
+        scheduled_embargoes is a list of dicts with keys
+            country: str
+            start_step: int
+            duration: int
+        Each entry fires once when current_step matches start_step. Active
+        embargoes are decremented by 1 step and removed when they expire.
+        """
+        # 1. Decrement existing embargoes; remove expired ones.
+        expired = []
+        for country, remaining in list(self.active_embargoes.items()):
+            if remaining <= 1:
+                expired.append(country)
+            else:
+                self.active_embargoes[country] -= 1
+        for country in expired:
+            del self.active_embargoes[country]
+            print(f"Political embargo lifted: {country} resumes export at step {self.current_step}")
+
+        # 2. Activate any scheduled embargoes whose start_step is now.
+        for emb in self.scheduled_embargoes:
+            if emb.get('start_step') == self.current_step:
+                country = emb['country']
+                duration = int(emb['duration'])
+                if country in self.active_embargoes:
+                    # Extend if a duplicate fires; take the longer of the two.
+                    self.active_embargoes[country] = max(
+                        self.active_embargoes[country], duration
+                    )
+                else:
+                    self.active_embargoes[country] = duration
+                print(f"Political embargo: {country} withholds export for {duration} steps "
+                      f"(starting step {self.current_step})")
+
+    def is_embargoed(self, jurisdiction):
+        """Return True if the named jurisdiction is currently under embargo."""
+        return jurisdiction in self.active_embargoes
+
     def _trigger_geopolitical_event(self):
         """Trigger a geopolitical disruption event."""
         # Get all jurisdictions with mines

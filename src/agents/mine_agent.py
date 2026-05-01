@@ -36,15 +36,18 @@ class MineAgent(Agent):
         # Operational state
         self.operational = True
         self.disruption_counter = 0
-        
+
         # Production tracking
         self.production_this_step = 0
         self.cumulative_production = 0
+        self.embargoed_production_this_step = 0
+        self.domestic_stockpile = 0
         
     def step(self):
         """Execute one time step of mine behavior."""
         self.production_this_step = 0
-        
+        self.embargoed_production_this_step = 0
+
         # Check if recovering from disruption
         if self.disruption_counter > 0:
             self.disruption_counter -= 1
@@ -84,12 +87,22 @@ class MineAgent(Agent):
         production_capacity is already in tonnes of mineral. Refining yield
         loss is modeled separately on the processor side via conversion_efficiency.
         ore_grade is retained as metadata for cost/reporting only.
+
+        If this mine's jurisdiction is under a political embargo, the
+        produced material is routed to a domestic_stockpile rather than
+        being made available on the international market. Reserves are
+        debited either way (the country still extracted the ore).
         """
         output = min(self.production_capacity, self.reserves)
 
         self.reserves -= output
-        self.production_this_step = output
         self.cumulative_production += output
+
+        if self.model.is_embargoed(self.jurisdiction):
+            self.domestic_stockpile += output
+            self.embargoed_production_this_step = output
+        else:
+            self.production_this_step = output
         
         # Offer production to processors (handled by model's market mechanism)
     
