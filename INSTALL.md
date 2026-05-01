@@ -1,128 +1,66 @@
 # Installation and Setup Guide
 
+pyExaMINE uses [uv](https://docs.astral.sh/uv/) to manage its Python
+environment. `uv` resolves and installs dependencies into a project-local
+`.venv/`, and `uv run` lets you execute the simulation without manually
+activating anything.
+
 ## Quick Start
 
-### 1. Create Virtual Environment
+### 1. Install uv
+
+**macOS (Homebrew):**
+```bash
+brew install uv
+```
+
+**Other platforms** (one-line installer):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 2. Create the project environment
 
 ```bash
-# Navigate to project directory
 cd pyExaMINE
-
-# Create virtual environment
-python3 -m venv venv
-
-# Activate virtual environment
-source venv/bin/activate  # On macOS/Linux
-# OR
-venv\Scripts\activate  # On Windows
+uv venv
+uv pip install -r requirements.txt
 ```
 
-### 2. Install Dependencies
+`uv venv` creates `.venv/` in the project root (using a Python that uv
+selects automatically). `uv pip install -r requirements.txt` populates it.
+
+### 3. Run a simulation
 
 ```bash
-# Install required packages
-pip install -r requirements.txt
+# Single mineral
+uv run python run_simulation.py --mineral lithium --steps 200
+
+# All three
+uv run python run_simulation.py --all --steps 200 --seed 42
 ```
 
-### 3. Run a Simulation
+`uv run` finds `.venv/` automatically — you do not need to
+`source .venv/bin/activate` first.
 
-```bash
-# Run Lithium simulation (200 steps, default)
-python3 run_simulation.py --mineral lithium --steps 200
+## Prerequisites
 
-# Run all three minerals
-python3 run_simulation.py --all --steps 200
-
-# Run with custom parameters
-python3 run_simulation.py --mineral nickel --steps 300 --geo-prob 0.02 --seed 123
-```
-
-## Installation Steps (Detailed)
-
-### Prerequisites
-
-- Python 3.9 or higher
-- pip (Python package manager)
+- macOS, Linux, or Windows
+- `uv` (installs and manages Python interpreters and dependencies)
 - Git (optional, for cloning)
 
-### Step-by-Step Setup
+`uv` installs an appropriate Python interpreter on demand if you don't
+already have one; you do not need to install Python separately.
 
-1. **Clone or Download the Repository**
-   ```bash
-   git clone https://github.com/yourusername/pyExaMINE.git
-   cd pyExaMINE
-   ```
-
-2. **Create Virtual Environment**
-   ```bash
-   python3 -m venv venv
-   ```
-   
-   This creates an isolated Python environment in the `venv/` directory.
-
-3. **Activate Virtual Environment**
-   
-   **On macOS/Linux:**
-   ```bash
-   source venv/bin/activate
-   ```
-   
-   **On Windows:**
-   ```bash
-   venv\Scripts\activate
-   ```
-   
-   You should see `(venv)` appear in your terminal prompt.
-
-4. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-   
-   This installs:
-   - Mesa 2.x (agent-based modeling framework)
-   - pandas (data manipulation)
-   - numpy (numerical computing)
-   - matplotlib (visualization)
-   - seaborn (statistical visualization)
-
-5. **Verify Installation**
-   ```bash
-   python3 -c "import mesa; print(f'Mesa version: {mesa.__version__}')"
-   ```
-   
-   Should output: `Mesa version: 2.x.x`
-
-### Troubleshooting
-
-**Error: "No module named 'mesa'"**
-- Make sure your virtual environment is activated
-- Run `pip install -r requirements.txt` again
-
-**Error: "externally-managed-environment"**
-- You need to use a virtual environment (see step 2 above)
-- Never install with `--break-system-packages` unless you know what you're doing
-
-**Error: "Command 'python' not found"**
-- Use `python3` instead of `python`
-- On some systems, Python 3 is accessed via `python3`
-
-## Running Simulations
-
-### Basic Usage
+## Verify installation
 
 ```bash
-# Activate venv first!
-source venv/bin/activate
-
-# Run single mineral
-python3 run_simulation.py --mineral lithium --steps 200
-
-# Run all minerals
-python3 run_simulation.py --all --steps 200
+uv run python -c "import mesa; print(f'Mesa version: {mesa.__version__}')"
 ```
 
-### Command-Line Options
+Expected output: `Mesa version: 2.4.x` (or any 2.x release).
+
+## Command-line options
 
 ```
 --mineral {lithium,nickel,platinum}  # Which mineral to simulate
@@ -134,128 +72,121 @@ python3 run_simulation.py --all --steps 200
 --no-viz                             # Skip visualization generation (faster)
 ```
 
-### Examples
+## Examples
 
 ```bash
-# Quick test run (10 steps, no visualization)
-python3 run_simulation.py --mineral lithium --steps 10 --no-viz
+# Quick smoke test (no images)
+uv run python run_simulation.py --mineral lithium --steps 50 --no-viz
 
-# Long simulation with high disruption risk
-python3 run_simulation.py --mineral platinum --steps 500 --geo-prob 0.03
+# Long simulation with elevated geopolitical risk
+uv run python run_simulation.py --mineral platinum --steps 500 --geo-prob 0.03
 
-# Reproducible run with specific seed
-python3 run_simulation.py --mineral nickel --steps 200 --seed 42
+# Reproducible run with explicit seed
+uv run python run_simulation.py --mineral nickel --steps 200 --seed 42
 
 # Custom output directory
-python3 run_simulation.py --all --steps 300 --output-dir results/scenario1/
+uv run python run_simulation.py --all --steps 300 --output-dir results/scenario1/
 ```
 
-## Output Files
+## Output files
 
-Each simulation generates three files in the output directory:
+Each simulation generates three files per mineral in the output directory:
 
-1. **`{mineral}_supply_chain_analysis.png`**
-   - 6-panel visualization dashboard
-   - Shows price, inventory, supply, demand, disruptions, substitution
+1. **`{mineral}_supply_chain_analysis.png`** — 6-panel dashboard
+   (price, inventory, supply, demand, disruptions, substitution).
+2. **`{mineral}_model_data.csv`** — per-step time series of all metrics.
+3. **`{mineral}_summary_stats.txt`** — averages, fulfillment rate,
+   recycling rate, intensity reduction, etc.
 
-2. **`{mineral}_model_data.csv`**
-   - Time-series data for all metrics
-   - Can be used for custom analysis
-
-3. **`{mineral}_summary_stats.txt`**
-   - Key statistics summary
-   - Average price, fulfillment rate, recycling rate, etc.
-
-## Development Setup
-
-If you want to modify the code:
+## Updating dependencies
 
 ```bash
-# Install development dependencies
-pip install pytest black flake8
+# Refresh against requirements.txt
+uv pip install -r requirements.txt
 
-# Run tests (if available)
-pytest tests/
-
-# Format code
-black src/
-
-# Check code style
-flake8 src/
+# Or upgrade a single package
+uv pip install --upgrade mesa
 ```
 
-## Deactivating Virtual Environment
+To regenerate `requirements.txt` from the current environment:
+```bash
+uv pip freeze > requirements.txt
+```
 
-When you're done:
+## Troubleshooting
+
+**`No module named 'mesa'`**
+You ran `python` directly instead of `uv run python`, or `.venv/` is
+missing. Run `uv pip install -r requirements.txt` and use `uv run`.
+
+**Visualization backend errors**
+Install a Qt backend or run with `--no-viz`:
+```bash
+uv pip install pyqt5
+```
+
+**Out of memory on long runs**
+Reduce `--steps` or the agent counts in `src/config/{mineral}_config.py`.
+
+**Simulation runs but produces no output**
+Confirm `USGS_CMM.csv` is in the project root.
+
+## Optional: legacy venv flow
+
+If you cannot use `uv` (e.g., locked-down environment) the project still
+works with stock Python:
 
 ```bash
-deactivate
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python run_simulation.py --all --steps 200
 ```
 
-## Updating Dependencies
+You then need `source venv/bin/activate` in every shell that runs the
+simulation; `uv run` exists specifically to remove that step.
 
-To update packages:
+## Development setup
 
 ```bash
-pip install --upgrade mesa pandas numpy matplotlib seaborn
+uv pip install pytest black flake8
+
+uv run pytest tests/    # if tests exist
+uv run black src/
+uv run flake8 src/
 ```
 
-To regenerate requirements.txt:
-
-```bash
-pip freeze > requirements.txt
-```
-
-## Docker Alternative (Advanced)
-
-If you prefer Docker:
+## Docker alternative (advanced)
 
 ```dockerfile
-# Create Dockerfile
 FROM python:3.11-slim
 WORKDIR /app
+RUN pip install uv
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN uv pip install --system -r requirements.txt
 COPY . .
-CMD ["python3", "run_simulation.py", "--all", "--steps", "200"]
+CMD ["python", "run_simulation.py", "--all", "--steps", "200"]
 ```
 
 ```bash
-# Build and run
 docker build -t pyexamine .
 docker run -v $(pwd)/outputs:/app/outputs pyexamine
 ```
 
-## Common Issues
+## Next steps
 
-### Issue: Simulation runs but produces no output
-- Check that USGS_CMM.csv is in the root directory
-- Look for error messages in console output
+1. Read the [Architecture Plan](plans/architecture_plan.md) for technical details.
+2. See the [Quick Reference](plans/quick_reference.md) for agent behaviors.
+3. Modify config files in `src/config/` to test different scenarios.
+4. Extend the model with additional features.
 
-### Issue: Visualization fails
-- Install matplotlib backend: `pip install pyqt5`
-- Or run with `--no-viz` and view saved PNG files
+## Getting help
 
-### Issue: Out of memory
-- Reduce `--steps` parameter
-- Reduce number of agents in config files
-
-## Next Steps
-
-1. Read the [Architecture Plan](plans/architecture_plan.md) for technical details
-2. See [Quick Reference](plans/quick_reference.md) for agent behaviors
-3. Modify config files to test different scenarios
-4. Extend the model with additional features
-
-## Getting Help
-
-- Check the [README.md](README.md) for overview
-- Review [Implementation Roadmap](plans/implementation_roadmap.md)
-- Open an issue on GitHub
-- Contact: your.email@example.com
+- Overview: [README.md](README.md)
+- Roadmap: [plans/implementation_roadmap.md](plans/implementation_roadmap.md)
+- Issues: GitHub issue tracker
 
 ---
 
-**Last Updated**: 2026-05-01  
-**Python Version**: 3.9+  
-**Mesa Version**: 2.0+
+**Python:** managed by uv (3.10+ recommended)
+**Mesa:** 2.4+

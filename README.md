@@ -80,22 +80,31 @@ pyExaMINE/
 
 ## Installation
 
+pyExaMINE uses [uv](https://docs.astral.sh/uv/) to manage its Python
+environment. `uv run` executes the simulation in the project's `.venv/`
+without requiring you to activate it manually.
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/pyExaMINE.git
 cd pyExaMINE
 
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install uv (macOS)
+brew install uv
+# or, on any platform:
+# curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
-pip install -r requirements.txt
+# Create the project environment and install dependencies
+uv venv
+uv pip install -r requirements.txt
 ```
 
+See [INSTALL.md](INSTALL.md) for the legacy `python -m venv venv` path
+if you cannot use uv.
+
 **Requirements:**
-- Python >= 3.9
-- Mesa >= 2.0.0 (agent-based modeling framework)
+- uv (installs Python interpreter on demand)
+- Mesa >= 2.4 (agent-based modeling framework)
 - pandas, numpy (data manipulation)
 - matplotlib, seaborn (visualization)
 
@@ -105,19 +114,19 @@ pip install -r requirements.txt
 
 ```bash
 # Simulate Lithium supply chain for 200 steps
-python run_simulation.py --mineral lithium --steps 200
+uv run python run_simulation.py --mineral lithium --steps 200
 
 # Simulate Nickel with custom geopolitical event probability
-python run_simulation.py --mineral nickel --steps 300 --geo-prob 0.02
+uv run python run_simulation.py --mineral nickel --steps 300 --geo-prob 0.02
 
 # Run with specific random seed for reproducibility
-python run_simulation.py --mineral platinum --steps 250 --seed 42
+uv run python run_simulation.py --mineral platinum --steps 250 --seed 42
 ```
 
 ### Run All Three Minerals
 
 ```bash
-python run_simulation.py --all --steps 200
+uv run python run_simulation.py --all --steps 200
 ```
 
 ### Command-Line Options

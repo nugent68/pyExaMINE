@@ -10,14 +10,14 @@ PRICE DYNAMICS:
   Price Volatility (std): $63.11
 
 SUPPLY:
-  Average Mine Output: 1,315.14 tons/step
-  Average Recycled Supply: 297.48 tons/step
-  Recycling Rate: 18.45%
-  Average Processor Inventory: 13,748.35 tons
+  Average Mine Output: 1,331.04 tons/step
+  Average Recycled Supply: 298.25 tons/step
+  Recycling Rate: 18.31%
+  Average Processor Inventory: 13,636.67 tons
 
 DEMAND:
   Total Demand: 5,695,210.87 tons
-  Fulfillment Rate: 78.73%
+  Fulfillment Rate: 79.09%
 
 DISRUPTIONS:
   Average Disrupted Mines: 0.67

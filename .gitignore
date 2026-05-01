@@ -1,0 +1,16 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Python bytecode caches
+__pycache__/
+*.pyc
+*.pyo
+
+# uv lock cache
+.uv/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
