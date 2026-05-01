@@ -111,7 +111,7 @@ without requiring you to activate it manually.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pyExaMINE.git
+git clone https://github.com/nugent68/pyExaMINE.git
 cd pyExaMINE
 
 # Install uv (macOS)
