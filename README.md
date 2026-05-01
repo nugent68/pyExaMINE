@@ -219,16 +219,16 @@ If you use this model in your research, please cite:
 @software{pyexamine2026,
   title={pyExaMINE: ExaScale Minerals \& Infrastructure Network Evaluation},
   subtitle={Agent-Based Modeling of Critical Minerals Supply Chains},
-  author={Your Name},
+  author={Peter Nugent},
   year={2026},
-  url={https://github.com/yourusername/pyExaMINE}
+  url={https://github.com/nugent68/pyExaMINE}
 }
 ```
 
 ## Contact
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/pyExaMINE/issues)
-- **Email**: your.email@example.com
+- **Issues**: [GitHub Issues](https://github.com/nugent68/pyExaMINE/issues)
+- **Email**: penugent@lbl.gvo
 
 ## Acknowledgments
 
