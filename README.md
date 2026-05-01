@@ -1,6 +1,6 @@
 # pyExaMINE
 
-**Python Examination of Mineral INterdependence in the Economy**
+**Python ExaScale Minerals & Infrastructure Network Evaluation**
 
 An agent-based model (ABM) for simulating critical minerals supply chains using real-world USGS data. Models the complete lifecycle from mining through processing, manufacturing, consumption, and recycling with dynamic pricing, geopolitical disruptions, and material substitution effects.
 
@@ -217,7 +217,8 @@ If you use this model in your research, please cite:
 
 ```bibtex
 @software{pyexamine2026,
-  title={pyExaMINE: Agent-Based Modeling of Critical Minerals Supply Chains},
+  title={pyExaMINE: ExaScale Minerals \& Infrastructure Network Evaluation},
+  subtitle={Agent-Based Modeling of Critical Minerals Supply Chains},
   author={Your Name},
   year={2026},
   url={https://github.com/yourusername/pyExaMINE}
