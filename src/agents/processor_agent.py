@@ -30,6 +30,9 @@ class ProcessorAgent(Agent):
         self.inventory = 0
         self.raw_ore_buffer = 0
         
+        # Safety stock (don't sell below this level)
+        self.safety_stock = capacity * 2.0  # 2 steps of processing capacity
+        
         # Tracking
         self.processed_this_step = 0
         self.purchased_this_step = 0
@@ -109,7 +112,9 @@ class ProcessorAgent(Agent):
     
     def get_available_inventory(self):
         """Get the amount of processed mineral available for sale."""
-        return self.inventory
+        # Only sell above safety stock
+        available = max(0, self.inventory - self.safety_stock)
+        return available
     
     def sell_inventory(self, amount):
         """Sell processed mineral to manufacturers.
@@ -120,7 +125,9 @@ class ProcessorAgent(Agent):
         Returns:
             Actual amount sold
         """
-        sold = min(amount, self.inventory)
+        # Don't sell below safety stock
+        available = max(0, self.inventory - self.safety_stock)
+        sold = min(amount, available)
         self.inventory -= sold
         self.sold_this_step += sold
         return sold

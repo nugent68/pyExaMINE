@@ -50,29 +50,37 @@ class RecyclingAgent(Agent):
     
     def _collect_eol_materials(self):
         """Collect materials from the end-of-life pool."""
-        # Get materials from EOL pool with product lifetime lag
-        available_eol = self.model.get_eol_materials()
+        # Get materials from EOL pool with product lifetime lag (in product units)
+        available_eol_products = self.model.get_eol_materials()
         
-        if available_eol > 0:
+        if available_eol_products > 0:
             # Collect a fraction
-            collected = available_eol * self.collection_rate
-            self.storage += collected
-            self.collected_this_step = collected
+            collected_products = available_eol_products * self.collection_rate
+            
+            # Convert products to mineral content
+            # Products contain mineral based on manufacturer's intensity
+            mineral_intensity = self.model.config.get("manufacturer_mineral_intensity", 0.08)
+            collected_mineral = collected_products * mineral_intensity
+            
+            self.storage += collected_mineral
+            self.collected_this_step = collected_mineral
             
             # Remove from EOL pool
-            self.model.remove_from_eol_pool(collected)
+            self.model.remove_from_eol_pool(collected_products)
     
     def _process_materials(self):
         """Process collected materials to recover pure mineral."""
         if self.storage <= 0:
             return
         
-        # Process all storage (simplified)
-        recovered = self.storage * self.recovery_efficiency
+        # Process all storage and apply recovery efficiency
+        recovered_mineral = self.storage * self.recovery_efficiency
         
-        # Clear storage and track recovered amount
+        # Clear storage
         self.storage = 0
-        self.recycled_this_step = recovered
+        
+        # Track for reporting (don't clear this until next step!)
+        self.recycled_this_step = recovered_mineral
     
     def _sell_recovered_materials(self):
         """Sell recovered materials to processors if profitable."""
@@ -82,26 +90,26 @@ class RecyclingAgent(Agent):
         # Check profitability
         revenue_per_ton = self.model.current_price
         
-        # Only sell if revenue > cost (simplified: ignore collection cost, already incurred)
+        # Only sell if revenue > cost
         if revenue_per_ton > self.processing_cost:
-            # Find processors to sell to
-            processors = [agent for agent in self.model.schedule.agents 
-                         if hasattr(agent, 'inventory') and hasattr(agent, 'conversion_efficiency')]
+            # Use model's processor list directly
+            processors = self.model.processors
             
             if processors:
                 # Distribute equally (simplified)
                 amount_per_processor = self.recycled_this_step / len(processors)
                 
                 for processor in processors:
-                    # Inject into processor inventory
+                    # Inject recovered mineral into processor inventory
                     processor.inventory += amount_per_processor
                     self.total_recycled += amount_per_processor
                 
-                # Clear recycled amount
-                self.recycled_this_step = 0
+                # Don't clear recycled_this_step here - it needs to be reported!
+                # It will be reset at the start of next step()
         else:
-            # Store for later (keep in recycled_this_step, will accumulate)
-            pass
+            # Price too low, accumulate in storage for later
+            self.storage += self.recycled_this_step
+            self.recycled_this_step = 0
     
     def get_recycled_supply(self):
         """Get the amount recycled this step."""

@@ -91,22 +91,26 @@ class ManufacturerAgent(Agent):
         minerals_needed = max(0, self.target_inventory - self.input_inventory)
         
         if minerals_needed > 0:
+            # Rate-limit ordering: only order a fraction per step to smooth flow
+            order_rate = 0.5  # Order up to 50% of need per step
+            order_amount = minerals_needed * order_rate
+            
             # Try to order from processors - use model's processor list directly
             processors = self.model.processors
             
             for processor in processors:
-                if minerals_needed <= 0:
+                if order_amount <= 0:
                     break
                 
                 available = processor.get_available_inventory()
                 if available > 0:
-                    # Order what we need
-                    desired = min(minerals_needed, available)
+                    # Order what we need (up to order_amount limit)
+                    desired = min(order_amount, available)
                     actual = processor.accept_order(desired)
                     
                     self.input_inventory += actual
                     self.ordered_this_step += actual
-                    minerals_needed -= actual
+                    order_amount -= actual
     
     def _produce_goods(self):
         """Produce finished goods from mineral inputs."""

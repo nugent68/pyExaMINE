@@ -232,18 +232,33 @@ class MineralSupplyChainModel(Model):
         price_sensitivity = self.config.get("consumer_price_sensitivity", -0.8)
         
         # Get baseline demand from USGS data
-        # Use 2024 demand if available, otherwise estimate
-        if '2024_' in str(demand_data):
-            baseline_demand = list(demand_data.values())[0] if demand_data else 100000
-        else:
-            baseline_demand = 100000  # Default
+        # Look for 2024 demand value (keys like '2024_', '2024_NetZero', etc.)
+        baseline_demand = 100000  # Default fallback
+        
+        if demand_data:
+            # Find any key containing '2024'
+            for key, value in demand_data.items():
+                if '2024' in str(key) and value > 0:
+                    baseline_demand = value
+                    print(f"Using USGS 2024 demand: {baseline_demand:,.0f} tons/year")
+                    break
         
         # Convert to per-step demand (assuming 52 steps per year)
+        # USGS data is in tons of MINERAL per year
+        # Consumer demand should be in tons of PRODUCT per step
+        # Product contains mineral based on mineral_intensity
         steps_per_year = self.config.get("steps_per_year", 52)
-        demand_per_step = baseline_demand / steps_per_year
+        mineral_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
+        
+        # Convert mineral demand to product demand
+        mineral_demand_per_step = baseline_demand / steps_per_year
+        product_demand_per_step = mineral_demand_per_step / mineral_intensity
         
         # Distribute among consumers
-        base_demand_per_consumer = demand_per_step / n_consumers
+        base_demand_per_consumer = product_demand_per_step / n_consumers
+        
+        print(f"Mineral demand: {mineral_demand_per_step:,.2f} tons/step -> Product demand: {product_demand_per_step:,.2f} units/step")
+        print(f"Per consumer: {base_demand_per_consumer:,.4f} units/step")
         
         for i in range(n_consumers):
             consumer = ConsumerAgent(
@@ -363,18 +378,35 @@ class MineralSupplyChainModel(Model):
     
     def _update_price(self):
         """Update global price based on market conditions."""
-        # Calculate total processor inventory
+        # Calculate total processor inventory (tons of mineral)
         total_inventory = sum(p.inventory for p in self.processors)
         
-        # Calculate average demand
-        total_demand = sum(c.current_demand for c in self.consumers)
-        avg_demand = total_demand if total_demand > 0 else 1.0
+        # Calculate total demand in MINERAL tons (not product units)
+        # Consumers demand products, need to convert to mineral content
+        total_product_demand = sum(c.current_demand for c in self.consumers)
         
-        # Update price
+        # Convert product demand to mineral demand using mineral intensity
+        # Get current average mineral intensity from manufacturers
+        if self.manufacturers:
+            avg_intensity = sum(m.mineral_intensity for m in self.manufacturers) / len(self.manufacturers)
+        else:
+            avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
+        
+        mineral_demand = total_product_demand * avg_intensity
+        mineral_demand = mineral_demand if mineral_demand > 0 else 1.0
+        
+        # Use AVAILABLE inventory (above safety stock) for price calculation
+        # This prevents zero-inventory spikes from causing false shortages
+        total_available_inventory = sum(p.get_available_inventory() for p in self.processors)
+        
+        # Add minimum threshold: don't let ratio go to zero even if inventory is low
+        effective_inventory = max(total_available_inventory, mineral_demand * 0.1)
+        
+        # Update price based on mineral inventory vs mineral demand
         self.current_price = update_price(
             self.current_price,
-            total_inventory,
-            avg_demand,
+            effective_inventory,
+            mineral_demand,
             self.price_floor,
             self.price_ceiling
         )
@@ -388,6 +420,12 @@ class MineralSupplyChainModel(Model):
         # Schedule for collection after product lifetime
         future_step = self.current_step + self.product_lifetime
         self.end_of_life_pool[future_step] = self.end_of_life_pool.get(future_step, 0) + quantity
+        
+        # Debug: track EOL additions
+        if self.current_step < 10 or self.current_step % 100 == 0:
+            total_in_pool = sum(self.end_of_life_pool.values())
+            if quantity > 0:
+                print(f"  [EOL] Step {self.current_step}: Added {quantity:.2f} products to pool (step {future_step}), total in pool: {total_in_pool:.2f}")
     
     def get_eol_materials(self):
         """Get end-of-life materials available for collection this step.
