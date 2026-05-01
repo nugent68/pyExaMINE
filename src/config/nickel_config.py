@@ -8,12 +8,9 @@ NICKEL_CONFIG = {
 
     # Fallback annual mineral demand (tonnes/year) used only if the USGS
     # demand column for this mineral is absent. USGS_CMM.csv currently
-    # supplies Nickel_Global_Demand_2024 (562 kt), so this fallback is
+    # supplies Nickel_Global_Demand_2024 (~3.5 Mt), so this fallback is
     # informational unless the column is removed.
-    "default_annual_demand_tons": 561724.0,
-
-    # USGS_CMM.csv reports Nickel production and reserves in tonnes already.
-    "usgs_units_to_tons": 1.0,
+    "default_annual_demand_tons": 3500000.0,
 
     # Price parameters ($/ton)
     "initial_price": 18000,

@@ -8,12 +8,9 @@ LITHIUM_CONFIG = {
 
     # Fallback annual mineral demand (tonnes/year) used only if the USGS
     # demand column for this mineral is absent. USGS_CMM.csv currently
-    # supplies Lithium_Global_Demand_2024 (128 kt), so this fallback is
+    # supplies Lithium_Global_Demand_2024 (~150 kt), so this fallback is
     # informational unless the column is removed.
-    "default_annual_demand_tons": 128001.0,
-
-    # USGS_CMM.csv reports Lithium production and reserves in tonnes already.
-    "usgs_units_to_tons": 1.0,
+    "default_annual_demand_tons": 150000.0,
 
     # Price parameters ($/ton)
     "initial_price": 17000,

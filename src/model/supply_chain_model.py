@@ -114,24 +114,24 @@ class MineralSupplyChainModel(Model):
     def _resolve_baseline_demand(self, demand_data):
         """Resolve baseline annual mineral demand (tonnes/year).
 
-        USGS demand columns are in kilotonnes/year while production columns
-        are in tonnes/year, so we rescale kt -> t. If the mineral has no
-        demand column (e.g., Platinum), fall back to
+        Values arrive already normalized to tonnes/year by the data loader
+        (which strips the [unit] suffix and applies the conversion factor).
+        If the mineral has no demand column in the CSV, fall back to
         config['default_annual_demand_tons'].
         """
         baseline_demand_tons_per_year = 0.0
         if demand_data:
             for key, value in demand_data.items():
                 if '2024' in str(key) and value > 0:
-                    baseline_demand_tons_per_year = value * 1000.0
-                    print(f"Using USGS 2024 demand: {baseline_demand_tons_per_year:,.0f} tons/year")
+                    baseline_demand_tons_per_year = float(value)
+                    print(f"Using 2024 demand from CSV: {baseline_demand_tons_per_year:,.0f} tons/year")
                     break
 
         if baseline_demand_tons_per_year <= 0:
             baseline_demand_tons_per_year = self.config.get(
                 'default_annual_demand_tons', 100000.0
             )
-            print(f"No USGS 2024 demand found; using config default: "
+            print(f"No 2024 demand column found; using config default: "
                   f"{baseline_demand_tons_per_year:,.0f} tons/year")
 
         steps_per_year = self.config.get('steps_per_year', 52)
@@ -151,16 +151,13 @@ class MineralSupplyChainModel(Model):
     def _create_mines(self, mines_data):
         """Create mine agents from USGS data.
 
-        Two rescalings happen here:
-        1. usgs_units_to_tons: USGS_CMM.csv reports Platinum production and
-           reserves in kilograms while Lithium and Nickel use tonnes. The
-           per-mineral config supplies the conversion factor (default 1.0).
-        2. steps_per_year: production_capacity is an annual flow in the
-           source data and a per-step capacity in the agent.
-        Reserves are stocks, so they only get rescaled by units_to_tons.
+        Production_capacity is an annual flow in the (loader-normalized)
+        source data; the agent operates on per-step capacity, so we divide
+        by steps_per_year here. Reserves are stocks and are stored as-is.
+        Per-mineral unit conversion happens in the data loader via the
+        [unit] suffix on the column header.
         """
         steps_per_year = self.config.get('steps_per_year', 52)
-        units_to_tons = self.config.get('usgs_units_to_tons', 1.0)
 
         for i, mine_params in enumerate(mines_data):
             mine = MineAgent(
@@ -168,9 +165,9 @@ class MineralSupplyChainModel(Model):
                 model=self,
                 jurisdiction=mine_params['jurisdiction'],
                 ore_grade=mine_params['ore_grade'],
-                production_capacity=mine_params['production_capacity'] * units_to_tons / steps_per_year,
+                production_capacity=mine_params['production_capacity'] / steps_per_year,
                 extraction_cost=mine_params['extraction_cost'],
-                reserves=mine_params['reserves'] * units_to_tons
+                reserves=mine_params['reserves'],
             )
             self.schedule.add(mine)
             self.mines.append(mine)

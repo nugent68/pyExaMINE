@@ -20,15 +20,10 @@ PLATINUM_CONFIG = {
     "n_recyclers": 2,
     "n_transport": 8,
     
-    # USGS_CMM.csv has no Platinum_Global_Demand column, so the model falls
-    # back to this value. Real global Pt demand is ~250 t/yr (autocatalysts,
-    # jewelry, fuel cells).
+    # Fallback annual mineral demand (tonnes/year) used only if USGS_CMM.csv
+    # has no Platinum_Global_Demand_2024 column. Real global Pt demand is
+    # ~250 t/yr (autocatalysts, jewelry, fuel cells).
     "default_annual_demand_tons": 250.0,
-
-    # USGS_CMM.csv reports Platinum production and reserves in kilograms,
-    # while Lithium and Nickel use tonnes. Multiply the raw values by this
-    # factor to get tonnes.
-    "usgs_units_to_tons": 0.001,
 
     # Production parameters (precious metal characteristics)
     "avg_ore_grade": 0.55,     # Very low grade ore
