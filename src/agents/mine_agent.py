@@ -37,8 +37,16 @@ class MineAgent(Agent):
         self.operational = True
         self.disruption_counter = 0
 
-        # Production tracking
+        # Production tracking. Two views per step:
+        #   available_production_this_step: gross output offered to the
+        #     international market this step. Set once in _produce (when
+        #     not embargoed) and never decremented; used by the price
+        #     signal and the gross-production data series.
+        #   production_this_step: same value initially, but decremented by
+        #     processor purchases as the step progresses; used by the
+        #     processor-purchase loop to discover what is still for sale.
         self.production_this_step = 0
+        self.available_production_this_step = 0
         self.cumulative_production = 0
         self.embargoed_production_this_step = 0
         self.domestic_stockpile = 0
@@ -46,6 +54,7 @@ class MineAgent(Agent):
     def step(self):
         """Execute one time step of mine behavior."""
         self.production_this_step = 0
+        self.available_production_this_step = 0
         self.embargoed_production_this_step = 0
 
         # Check if recovering from disruption
@@ -103,6 +112,7 @@ class MineAgent(Agent):
             self.embargoed_production_this_step = output
         else:
             self.production_this_step = output
+            self.available_production_this_step = output
         
         # Offer production to processors (handled by model's market mechanism)
     

@@ -6,33 +6,44 @@ Handles global price dynamics and geopolitical events.
 import random
 
 
-def update_price(current_price, total_inventory, demand_per_step,
+def update_price(current_price, supply_flow, demand_flow,
                  price_floor, price_ceiling,
-                 shortage_weeks=4.0, surplus_weeks=12.0,
+                 shortage_ratio=0.95, surplus_ratio=1.10,
                  step_pct=0.05):
-    """Update global price based on weeks-of-inventory.
+    """Update global price based on the supply/demand flow ratio.
 
     Args:
         current_price: Current price ($/ton).
-        total_inventory: Total mineral inventory (tons).
-        demand_per_step: Mineral demand per step (tons/step).
+        supply_flow: Mineral entering the market this step (tons/step) —
+            mine output (excluding any embargoed/stockpiled production)
+            plus recycled supply. Typically smoothed over a small window
+            by the caller.
+        demand_flow: Mineral demanded this step (tons/step), already
+            converted from product units via mineral intensity. Typically
+            smoothed over the same window.
         price_floor: Minimum price.
         price_ceiling: Maximum price.
-        shortage_weeks: Below this many weeks of cover, price rises.
-        surplus_weeks: Above this many weeks of cover, price falls.
+        shortage_ratio: If supply/demand falls below this, price rises.
+        surplus_ratio: If supply/demand exceeds this, price falls.
         step_pct: Price adjustment fraction per step.
 
     Returns:
         Updated price.
-    """
-    if demand_per_step > 0:
-        weeks_of_inventory = total_inventory / demand_per_step
-    else:
-        weeks_of_inventory = (shortage_weeks + surplus_weeks) / 2.0
 
-    if weeks_of_inventory < shortage_weeks:
+    Why flow-based: an inventory-level signal is masked by safety-stock
+    rules in the agents (processors hold inventory at safety stock, so
+    the inventory level barely moves even under a major upstream shock).
+    Comparing fresh supply against fresh demand makes the price respond
+    immediately when production or recycling falls behind consumption.
+    """
+    if demand_flow <= 0:
+        return current_price
+
+    ratio = supply_flow / demand_flow
+
+    if ratio < shortage_ratio:
         new_price = current_price * (1.0 + step_pct)
-    elif weeks_of_inventory > surplus_weeks:
+    elif ratio > surplus_ratio:
         new_price = current_price * (1.0 - step_pct)
     else:
         new_price = current_price

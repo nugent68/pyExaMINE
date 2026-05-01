@@ -66,6 +66,11 @@ class MineralSupplyChainModel(Model):
         # continue to extract; output goes to a domestic stockpile.
         self.scheduled_embargoes = list(config.get("political_embargoes", []))
         self.active_embargoes = {}  # jurisdiction -> remaining_steps
+
+        # Rolling history of mineral supply/demand flows (tons/step), used
+        # by the price-update signal. Indexed by step.
+        self.supply_flow_history: list = []
+        self.demand_flow_history: list = []
         
         # Agent lists for easy access
         self.mines = []
@@ -344,7 +349,7 @@ class MineralSupplyChainModel(Model):
                 "Step": lambda m: m.current_step,
                 "Global_Price": lambda m: m.current_price,
                 "Total_Processor_Inventory": lambda m: sum(a.inventory for a in m.processors),
-                "Total_Mine_Output": lambda m: sum(a.production_this_step for a in m.mines),
+                "Total_Mine_Output": lambda m: sum(a.available_production_this_step for a in m.mines),
                 "Total_Recycled_Supply": lambda m: sum(a.recycled_this_step for a in m.recyclers),
                 "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if not a.operational),
                 "Total_Consumer_Demand": lambda m: sum(a.current_demand for a in m.consumers),
@@ -468,34 +473,60 @@ class MineralSupplyChainModel(Model):
         print(f"Geopolitical event! {affected} disrupted for {duration} steps")
     
     def _update_price(self):
-        """Update global price based on weeks-of-inventory at processors.
+        """Update global price based on the supply/demand flow ratio.
 
-        Uses raw inventory rather than inventory net of safety stock; the old
-        net-of-safety-stock signal was almost always zero and produced a
-        permanent shortage signal.
+        Each step we record:
+          supply_flow = mine output available to market + recycled supply
+          demand_flow = consumer product demand x manufacturer intensity
+        The ratio is smoothed over a recent window (default 8 steps) to
+        damp scheduler-randomness noise; supply > demand pushes price down,
+        supply < demand pushes price up. Embargoed production is excluded
+        from supply_flow because mines route it to domestic stockpiles
+        (production_this_step stays zero), so the signal automatically
+        reflects political export-withholding.
         """
-        total_inventory = sum(p.inventory for p in self.processors)
+        # Fresh supply this step: gross mineral made available to the
+        # international market (available_production_this_step is set once
+        # by mine._produce and never decremented by processor purchases,
+        # so it captures what was offered, not just what didn't sell).
+        # Embargoed output goes to the domestic stockpile and stays out
+        # of this snapshot, so the signal automatically tracks embargoes.
+        supply_this_step = (
+            sum(m.available_production_this_step for m in self.mines)
+            + sum(r.recycled_this_step for r in self.recyclers)
+        )
 
-        # Convert current product demand to mineral tons using live
-        # manufacturer intensity (so substitution feeds back into price).
+        # Fresh demand this step: consumer demand converted to mineral tons
+        # using live manufacturer intensity (so substitution feeds back).
         total_product_demand = sum(c.current_demand for c in self.consumers)
         if self.manufacturers:
             avg_intensity = sum(m.mineral_intensity for m in self.manufacturers) / len(self.manufacturers)
         else:
             avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
-        mineral_demand = max(total_product_demand * avg_intensity, 1e-9)
+        demand_this_step = max(total_product_demand * avg_intensity, 1e-9)
 
-        shortage_weeks = self.config.get("price_shortage_weeks", 4.0)
-        surplus_weeks = self.config.get("price_surplus_weeks", 12.0)
+        # Slide into rolling window
+        window = int(self.config.get("price_signal_window_steps", 8))
+        self.supply_flow_history.append(supply_this_step)
+        self.demand_flow_history.append(demand_this_step)
+        if len(self.supply_flow_history) > window:
+            self.supply_flow_history.pop(0)
+            self.demand_flow_history.pop(0)
+
+        supply_smoothed = sum(self.supply_flow_history) / len(self.supply_flow_history)
+        demand_smoothed = sum(self.demand_flow_history) / len(self.demand_flow_history)
+
+        shortage_ratio = float(self.config.get("price_shortage_ratio", 0.95))
+        surplus_ratio = float(self.config.get("price_surplus_ratio", 1.10))
 
         self.current_price = update_price(
             self.current_price,
-            total_inventory,
-            mineral_demand,
+            supply_smoothed,
+            demand_smoothed,
             self.price_floor,
             self.price_ceiling,
-            shortage_weeks=shortage_weeks,
-            surplus_weeks=surplus_weeks,
+            shortage_ratio=shortage_ratio,
+            surplus_ratio=surplus_ratio,
         )
     
     def add_to_eol_pool(self, product_units):
