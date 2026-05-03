@@ -1,9 +1,10 @@
 # Installation and Setup Guide
 
 pyExaMINE uses [uv](https://docs.astral.sh/uv/) to manage its Python
-environment. `uv` resolves and installs dependencies into a project-local
-`.venv/`, and `uv run` lets you execute the simulation without manually
-activating anything.
+environment. Dependencies are declared in `pyproject.toml` and pinned
+in the committed `uv.lock`, so `uv sync` reproduces the exact same
+dependency graph on every machine. `uv run` lets you execute the
+simulation without manually activating anything.
 
 ## Quick Start
 
@@ -19,16 +20,17 @@ brew install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Create the project environment
+### 2. Sync the project environment
 
 ```bash
 cd pyExaMINE
-uv venv
-uv pip install -r requirements.txt
+uv sync
 ```
 
-`uv venv` creates `.venv/` in the project root (using a Python that uv
-selects automatically). `uv pip install -r requirements.txt` populates it.
+`uv sync` reads `pyproject.toml` and `uv.lock`, creates `.venv/` in the
+project root (using a Python that uv selects automatically), and
+installs the locked dependency set. Re-running it is idempotent and
+fast.
 
 ### 3. Run a simulation
 
@@ -70,6 +72,7 @@ Expected output: `Mesa version: 2.4.x` (or any 2.x release).
 --seed N                             # Random seed for reproducibility
 --output-dir DIR                     # Output directory (default: outputs/)
 --no-viz                             # Skip visualization generation (faster)
+--embargo SPEC                       # Schedule a political embargo (repeatable)
 ```
 
 ## Examples
@@ -101,28 +104,37 @@ Each simulation generates three files per mineral in the output directory:
 ## Updating dependencies
 
 ```bash
-# Refresh against requirements.txt
-uv pip install -r requirements.txt
+# Pull the latest versions allowed by pyproject.toml constraints
+# and rewrite uv.lock accordingly:
+uv lock --upgrade
 
-# Or upgrade a single package
-uv pip install --upgrade mesa
+# Add a new dependency (also writes to pyproject.toml + uv.lock):
+uv add some-package
+
+# Remove one:
+uv remove some-package
+
+# Reinstall exactly what uv.lock specifies (no resolution, no upgrade):
+uv sync
 ```
 
-To regenerate `requirements.txt` from the current environment:
+After upgrading, regenerate the legacy `requirements.txt` mirror so the
+non-uv flow stays in step:
+
 ```bash
-uv pip freeze > requirements.txt
+uv export --no-hashes --format requirements.txt > requirements.txt
 ```
 
 ## Troubleshooting
 
 **`No module named 'mesa'`**
 You ran `python` directly instead of `uv run python`, or `.venv/` is
-missing. Run `uv pip install -r requirements.txt` and use `uv run`.
+missing. Run `uv sync` and use `uv run`.
 
 **Visualization backend errors**
 Install a Qt backend or run with `--no-viz`:
 ```bash
-uv pip install pyqt5
+uv add pyqt5
 ```
 
 **Out of memory on long runs**
@@ -134,7 +146,7 @@ Confirm `USGS_CMM.csv` is in the project root.
 ## Optional: legacy venv flow
 
 If you cannot use `uv` (e.g., locked-down environment) the project still
-works with stock Python:
+works with stock Python and a regular `requirements.txt`:
 
 ```bash
 python3 -m venv venv
@@ -144,12 +156,17 @@ python run_simulation.py --all --steps 200
 ```
 
 You then need `source venv/bin/activate` in every shell that runs the
-simulation; `uv run` exists specifically to remove that step.
+simulation; `uv run` exists specifically to remove that step. Note
+that `requirements.txt` is a *mirror* of the canonical `pyproject.toml`
+declarations — if you want pinned versions identical to the lock,
+prefer the uv flow.
 
 ## Development setup
 
 ```bash
-uv pip install pytest black flake8
+# Add dev tools to the project (writes to pyproject.toml under
+# [dependency-groups]):
+uv add --group dev pytest black flake8
 
 uv run pytest tests/    # if tests exist
 uv run black src/
@@ -162,10 +179,10 @@ uv run flake8 src/
 FROM python:3.11-slim
 WORKDIR /app
 RUN pip install uv
-COPY requirements.txt .
-RUN uv pip install --system -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 COPY . .
-CMD ["python", "run_simulation.py", "--all", "--steps", "200"]
+CMD ["uv", "run", "python", "run_simulation.py", "--all", "--steps", "200"]
 ```
 
 ```bash
@@ -188,5 +205,5 @@ docker run -v $(pwd)/outputs:/app/outputs pyexamine
 
 ---
 
-**Python:** managed by uv (3.10+ recommended)
+**Python:** managed by uv (3.10+ required)
 **Mesa:** 2.4+

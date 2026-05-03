@@ -90,7 +90,9 @@ pyExaMINE/
 ├── README.md                          # This file
 ├── INSTALL.md                         # Detailed install / uv guide
 ├── USGS_CMM.csv                       # Source data (Li/Ni/Pt, unit-tagged headers)
-├── requirements.txt                   # Python dependencies
+├── pyproject.toml                     # Project metadata + dependency declarations (uv)
+├── uv.lock                            # Pinned dependency graph (committed)
+├── requirements.txt                   # Legacy mirror for non-uv users
 ├── plans/                             # Architecture documentation
 │   ├── architecture_plan.md
 │   ├── quick_reference.md
@@ -128,8 +130,10 @@ pyExaMINE/
 ## Installation
 
 pyExaMINE uses [uv](https://docs.astral.sh/uv/) to manage its Python
-environment. `uv run` executes the simulation in the project's `.venv/`
-without requiring you to activate it manually.
+environment. The project ships with a `pyproject.toml` and a committed
+`uv.lock`, so a single `uv sync` reproduces the exact dependency graph
+across machines. `uv run` then executes the simulation in the
+project's `.venv/` without requiring you to activate it manually.
 
 ```bash
 # Clone the repository
@@ -141,13 +145,13 @@ brew install uv
 # or, on any platform:
 # curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create the project environment and install dependencies
-uv venv
-uv pip install -r requirements.txt
+# Create the venv and install the locked dependency set
+uv sync
 ```
 
 See [INSTALL.md](INSTALL.md) for the legacy `python -m venv venv` path
-if you cannot use uv.
+(uses `requirements.txt`, kept in sync with `pyproject.toml`) if you
+cannot use uv.
 
 **Requirements:**
 - uv (installs Python interpreter on demand)
