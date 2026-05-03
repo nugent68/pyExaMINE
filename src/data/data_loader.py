@@ -143,17 +143,26 @@ class USGSDataLoader:
         demand_cols = [col for col in self.data.columns if mineral in col and 'Demand' in col]
         
         for col in demand_cols:
-            # Extract year from column name (e.g., "Lithium_Global_Demand_2024")
+            # Extract year and (optional) scenario from column name. A
+            # plain "..._Demand_2024" yields key "2024"; a scenario
+            # "..._Demand_2030_NetZero" yields key "2030_NetZero".
             parts = col.split('_')
             year_idx = [i for i, p in enumerate(parts) if p.isdigit()]
             if year_idx:
                 year = parts[year_idx[0]]
-                scenario = '_'.join(parts[year_idx[0]+1:]) if len(parts) > year_idx[0]+1 else 'baseline'
+                scenario = '_'.join(parts[year_idx[0] + 1:])
                 key = f"{year}_{scenario}" if scenario else year
-                
-                # Take the first non-zero value from the data
+
+                # Use the first non-zero value across rows so a 0 in row 0
+                # doesn't shadow a real global figure further down.
                 values = self.data[col].dropna()
-                demand_data[key] = values.iloc[0] if len(values) > 0 else 0
+                non_zero = values[values > 0]
+                if len(non_zero) > 0:
+                    demand_data[key] = float(non_zero.iloc[0])
+                elif len(values) > 0:
+                    demand_data[key] = float(values.iloc[0])
+                else:
+                    demand_data[key] = 0.0
         
         return demand_data
     
@@ -168,13 +177,17 @@ class USGSDataLoader:
         return producers
     
     def derive_mine_parameters(self, country: str, mineral: str,
-                               base_extraction_cost: float = 10000) -> Dict:
+                               base_extraction_cost: float = 10000,
+                               default_ore_grade: float = 0.7) -> Dict:
         """Derive mine parameters for a specific country and mineral.
 
         Args:
             country: Country name
             mineral: Mineral name
             base_extraction_cost: Base extraction cost in $/ton
+            default_ore_grade: Ore grade to assign (metadata only; the
+                model treats production_capacity as already in
+                contained-mineral tonnes per the USGS convention).
 
         Returns:
             Dictionary with mine parameters (production_capacity in
@@ -192,33 +205,23 @@ class USGSDataLoader:
 
         production = country_data[production_col]
         reserves = country_data[reserves_col]
-        
-        # Derive ore grade from reserves/production ratio
-        # Higher reserves relative to production suggests lower grade (more rock to process)
-        if reserves > 0 and production > 0:
-            reserve_production_ratio = reserves / production
-            # Normalize: typical ratio 50-500, map to ore_grade 0.4-0.95
-            ore_grade = np.clip(1.0 - (reserve_production_ratio / 1000), 0.4, 0.95)
-        else:
-            ore_grade = 0.7  # Default
-        
+
         # Regional cost multipliers (simplified)
         regional_multipliers = {
             'China': 0.8, 'Indonesia': 0.9, 'Russia': 1.1, 'Australia': 1.3,
             'Canada': 1.2, 'United States': 1.4, 'Chile': 1.0, 'Brazil': 0.95,
             'South Africa': 1.0, 'Congo (Kinshasa)': 0.7, 'Philippines': 0.85,
-            'Other countries': 1.0
+            'Other countries': 1.0,
         }
-        
         multiplier = regional_multipliers.get(country, 1.0)
         extraction_cost = base_extraction_cost * multiplier
-        
+
         return {
             'jurisdiction': country,
-            'production_capacity': production,  # tons/step
+            'production_capacity': production,
             'reserves': reserves,
-            'ore_grade': ore_grade,
-            'extraction_cost': extraction_cost
+            'ore_grade': default_ore_grade,
+            'extraction_cost': extraction_cost,
         }
     
     def get_all_mines_data(self, mineral: str, base_extraction_cost: float = 10000) -> List[Dict]:
