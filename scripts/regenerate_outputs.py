@@ -17,13 +17,21 @@ Run with: ``uv run python scripts/regenerate_outputs.py``.
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 # Make `src` importable when run directly.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
+
+# Per-seed run CSVs land here (gitignored). Committed ensemble outputs
+# (summary CSV + band PNG) stay in outputs/. Keeps the visible
+# repository tidy even when N=20 produces hundreds of large CSVs.
+_ENSEMBLE_RUN_DIR = _REPO_ROOT / 'ensemble_runs'
 
 from src.config.lithium_config import LITHIUM_CONFIG
 from src.config.nickel_config import NICKEL_CONFIG
@@ -87,6 +95,385 @@ def _embargo(country: str, start: int, duration: int) -> dict:
 
 def _chokepoint(name: str, start: int, duration: int) -> dict:
     return {'chokepoint': name, 'start_step': start, 'duration': duration}
+
+
+# ---------------------------------------------------------------------------
+# Ensemble helpers (used when --n-seeds > 1)
+# ---------------------------------------------------------------------------
+
+
+def _run_one_seed(mineral: str, steps: int, seed: int, *,
+                  embargoes=None, chokepoint_crises=None):
+    """Run one mineral simulation at a given seed and return the DataFrame.
+
+    No file output -- caller decides where (if anywhere) to persist.
+    Used by the ensemble runner so per-seed CSVs land in the gitignored
+    ensemble_runs/ tree rather than in committed outputs/.
+    """
+    cfg = CONFIGS[mineral].copy()
+    cfg['n_steps'] = steps
+    cfg['random_seed'] = seed
+    if embargoes:
+        cfg['political_embargoes'] = list(embargoes)
+    if chokepoint_crises:
+        cfg['chokepoint_crises'] = list(chokepoint_crises)
+    model = MineralSupplyChainModel(cfg)
+    model.run_model(steps)
+    return model.get_model_data()
+
+
+def _seed_job(args):
+    """Worker entry point for ProcessPoolExecutor.
+
+    Must be a top-level function (not a closure / lambda) so it pickles
+    cleanly to subprocesses. The driver passes a tuple of plain Python
+    objects (mineral name, ints, dicts, str path) which all pickle
+    without ceremony. Each worker writes its own per-seed CSV (no
+    contention -- paths differ by seed) and returns the DataFrame for
+    the driver to summarise. With ~320 KB per DataFrame, pickle
+    transfer is cheap relative to the 30-50 s of compute per seed.
+    """
+    mineral, steps, seed, embargoes, choke, csv_path = args
+    df = _run_one_seed(
+        mineral, steps, seed,
+        embargoes=embargoes, chokepoint_crises=choke,
+    )
+    df.to_csv(csv_path)
+    return df
+
+
+def _run_ensemble(mineral: str, steps: int, scenario_path: Path, *,
+                  n_seeds: int, seed_base: int,
+                  embargoes=None, chokepoint_crises=None,
+                  pool: ProcessPoolExecutor | None = None):
+    """Run the same scenario N times with seeds [seed_base..seed_base+N-1].
+
+    Per-seed CSVs go to the gitignored ensemble_runs/ tree mirroring
+    the scenario_path layout (e.g. outputs/2050/asia_crisis_2030 ->
+    ensemble_runs/2050/asia_crisis_2030/lithium/seed_42.csv). Returns
+    the list of DataFrames (one per seed, in seed order) so callers
+    can pass them straight to _summarize_ensemble / plot_ensemble_band.
+
+    If a ProcessPoolExecutor is supplied, seeds run in parallel and
+    results are reassembled in seed order for the paired-comparison
+    statistics. ``pool=None`` runs sequentially (the default for
+    --n-workers 1).
+    """
+    rel = scenario_path.relative_to(_REPO_ROOT / 'outputs')
+    seed_dir = _ENSEMBLE_RUN_DIR / rel / mineral
+    seed_dir.mkdir(parents=True, exist_ok=True)
+
+    jobs = [
+        (
+            mineral, steps, seed_base + i, embargoes, chokepoint_crises,
+            str(seed_dir / f'seed_{seed_base + i}.csv'),
+        )
+        for i in range(n_seeds)
+    ]
+
+    if pool is None:
+        return [_seed_job(j) for j in jobs]
+    # pool.map preserves input order, so the returned list is in
+    # seed order even though workers may finish out-of-order.
+    return list(pool.map(_seed_job, jobs))
+
+
+def _summarize_ensemble(scen_dfs, window_start, window_len, base_dfs=None):
+    """Compute mean/std/p10/p50/p90 of in-window price across an ensemble.
+
+    If baseline DataFrames are supplied (one per seed, paired by index
+    with scen_dfs), also computes the per-seed delta percentage. Pairing
+    by index means delta is taken on matched RNG sequences -- shared
+    geopolitical events that fired in both runs cancel out, leaving
+    just the scenario-attributable signal. This is the whole point of
+    matched-pair ensemble inference.
+    """
+    scen_avgs = np.array([
+        _in_window_avg(df, window_start, window_len) for df in scen_dfs
+    ], dtype=float)
+    summary = {
+        'n_seeds': int(len(scen_avgs)),
+        'scen_mean': float(np.mean(scen_avgs)),
+        'scen_std': float(np.std(scen_avgs, ddof=1)) if len(scen_avgs) > 1 else 0.0,
+        'scen_p10': float(np.percentile(scen_avgs, 10)),
+        'scen_p50': float(np.percentile(scen_avgs, 50)),
+        'scen_p90': float(np.percentile(scen_avgs, 90)),
+    }
+    if base_dfs:
+        base_avgs = np.array([
+            _in_window_avg(df, window_start, window_len) for df in base_dfs
+        ], dtype=float)
+        summary['base_mean'] = float(np.mean(base_avgs))
+        summary['base_std'] = float(np.std(base_avgs, ddof=1)) if len(base_avgs) > 1 else 0.0
+        # Paired per-seed deltas. Skip seeds where the baseline avg
+        # is non-positive (would divide by zero).
+        valid = base_avgs > 0
+        deltas = np.where(valid, (scen_avgs - base_avgs) / base_avgs * 100.0, 0.0)
+        if valid.any():
+            d_valid = deltas[valid]
+            summary.update({
+                'delta_mean_pct': float(np.mean(d_valid)),
+                'delta_std_pct': float(np.std(d_valid, ddof=1)) if len(d_valid) > 1 else 0.0,
+                'delta_p10_pct': float(np.percentile(d_valid, 10)),
+                'delta_p50_pct': float(np.percentile(d_valid, 50)),
+                'delta_p90_pct': float(np.percentile(d_valid, 90)),
+            })
+    return summary, scen_avgs
+
+
+def _write_ensemble_summary(scenario_path: Path, rows: list[dict]):
+    """Write a single ensemble_summary.csv at the scenario level.
+
+    Each row is one mineral. Columns are the union of keys from
+    _summarize_ensemble (paired-delta keys may be absent if no
+    baseline was supplied).
+    """
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    df.to_csv(scenario_path / 'ensemble_summary.csv', index=False)
+
+
+def plot_ensemble_band(scenario_path: Path, mineral: str,
+                       scen_dfs, baseline_dfs=None,
+                       window_start: int | None = None,
+                       window_len: int | None = None):
+    """Time-series plot with median + p10/p90 band (per mineral).
+
+    If a baseline ensemble is passed, draws its median + band in grey
+    underneath the scenario for visual comparison. Saves to
+    {scenario_path}/{mineral}_ensemble_band.png.
+    """
+    if not scen_dfs:
+        return
+
+    steps = scen_dfs[0]['Step'].values
+    scen_prices = pd.DataFrame(
+        {i: df['Global_Price'].values for i, df in enumerate(scen_dfs)},
+    )
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    if baseline_dfs:
+        base_prices = pd.DataFrame(
+            {i: df['Global_Price'].values for i, df in enumerate(baseline_dfs)},
+        )
+        ax.fill_between(
+            steps,
+            base_prices.quantile(0.10, axis=1),
+            base_prices.quantile(0.90, axis=1),
+            alpha=0.15, color='grey', label=f'baseline p10-p90 (N={len(baseline_dfs)})',
+        )
+        ax.plot(
+            steps, base_prices.quantile(0.50, axis=1),
+            color='grey', lw=1.0, ls='--', label='baseline median',
+        )
+    ax.fill_between(
+        steps,
+        scen_prices.quantile(0.10, axis=1),
+        scen_prices.quantile(0.90, axis=1),
+        alpha=0.30, label=f'scenario p10-p90 (N={len(scen_dfs)})',
+    )
+    ax.plot(
+        steps, scen_prices.quantile(0.50, axis=1),
+        lw=1.4, label='scenario median',
+    )
+    if window_start is not None and window_len is not None:
+        ax.axvspan(window_start, window_start + window_len,
+                   color='orange', alpha=0.10, label='comparison window')
+    ax.set_xlabel('Step (weekly)')
+    ax.set_ylabel(f'{mineral.title()} price ($/t)')
+    ax.set_title(f'{mineral.title()} ensemble — {scenario_path.name}')
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper left', fontsize=9)
+    fig.tight_layout()
+    fig.savefig(scenario_path / f'{mineral}_ensemble_band.png', dpi=120)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Ensemble entry points (called when --n-seeds > 1)
+# ---------------------------------------------------------------------------
+
+
+def regenerate_ensembles(out_root: Path, n_seeds: int, seed_base: int,
+                         n_workers: int = 1):
+    """Run paired ensembles for every comparison-style scenario.
+
+    Layout per scenario folder:
+      ensemble_summary.csv            (one row per mineral)
+      <mineral>_ensemble_band.png     (one per mineral)
+    Per-seed CSVs go to ensemble_runs/<scenario>/<mineral>/seed_<N>.csv
+    (gitignored).
+
+    A single ProcessPoolExecutor is created up front and reused across
+    every scenario so the per-pool spawn cost (re-importing matplotlib /
+    pandas / numpy in each worker) is paid once for the whole run, not
+    once per scenario.
+    """
+    print(f"\n=== Running ensembles with N={n_seeds} seeds, "
+          f"{n_workers} worker{'s' if n_workers != 1 else ''} (base={seed_base}) ===")
+
+    pool = ProcessPoolExecutor(max_workers=n_workers) if n_workers > 1 else None
+    try:
+        _regenerate_ensembles_impl(out_root, n_seeds, seed_base, pool)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
+
+
+def _regenerate_ensembles_impl(out_root: Path, n_seeds: int, seed_base: int,
+                                pool: ProcessPoolExecutor | None):
+    # ---- Canonical baselines (Li/Ni/Pt at CANONICAL_STEPS) ----
+    print("\n[ensemble] canonical baselines")
+    canonical_baselines: dict[str, list[pd.DataFrame]] = {}
+    for mineral in ('lithium', 'nickel', 'platinum'):
+        print(f"  {mineral}")
+        canonical_baselines[mineral] = _run_ensemble(
+            mineral, CANONICAL_STEPS, out_root,
+            n_seeds=n_seeds, seed_base=seed_base, pool=pool,
+        )
+
+    # ---- 24-yr canonical embargo / chokepoint scenarios ----
+    embargo_scenarios = []
+    for folder, embargoes in LI_EMBARGO_SCENARIOS.items():
+        embargo_scenarios.append(
+            (folder, 'lithium', embargoes, None, EMBARGO_START,
+             max(int(e['duration']) for e in embargoes)),
+        )
+    embargo_scenarios.append(
+        ('sa_pt', 'platinum',
+         [_embargo('South Africa', EMBARGO_START, 52)], None,
+         EMBARGO_START, 52),
+    )
+
+    chokepoint_window = 24
+    chokepoint_scenarios = []
+    for folder, (mineral, crises) in CHOKEPOINT_SCENARIOS.items():
+        chokepoint_scenarios.append(
+            (folder, mineral, None, crises, EMBARGO_START, chokepoint_window),
+        )
+
+    canonical_comparison = embargo_scenarios + chokepoint_scenarios
+
+    print("\n[ensemble] canonical embargo + chokepoint scenarios")
+    for folder, mineral, embargoes, choke, ws, wl in canonical_comparison:
+        scenario_path = out_root / folder
+        scenario_path.mkdir(parents=True, exist_ok=True)
+        print(f"  {folder} / {mineral}")
+        scen_dfs = _run_ensemble(
+            mineral, CANONICAL_STEPS, scenario_path,
+            n_seeds=n_seeds, seed_base=seed_base,
+            embargoes=embargoes, chokepoint_crises=choke,
+            pool=pool,
+        )
+        summary, _ = _summarize_ensemble(
+            scen_dfs, ws, wl, base_dfs=canonical_baselines[mineral],
+        )
+        summary['mineral'] = mineral
+        summary['window_start'] = ws
+        summary['window_len'] = wl
+        _write_ensemble_summary(scenario_path, [summary])
+        plot_ensemble_band(
+            scenario_path, mineral,
+            scen_dfs, baseline_dfs=canonical_baselines[mineral],
+            window_start=ws, window_len=wl,
+        )
+
+    # ---- 26-yr 2050 baselines + combined scenarios ----
+    out_2050 = out_root / '2050'
+    print("\n[ensemble] 2050 baselines")
+    baselines_2050: dict[str, list[pd.DataFrame]] = {}
+    base_dir = out_2050 / 'baseline'
+    base_dir.mkdir(parents=True, exist_ok=True)
+    base_summary_rows = []
+    for mineral in ('lithium', 'nickel', 'platinum'):
+        print(f"  {mineral}")
+        baselines_2050[mineral] = _run_ensemble(
+            mineral, SCENARIO_2050_STEPS, base_dir,
+            n_seeds=n_seeds, seed_base=seed_base, pool=pool,
+        )
+        # Write a baseline-only summary (no delta) for reference -- the
+        # comparison window for the baseline matches each crisis scenario's
+        # window, so we report the union of windows below.
+    # Compute baseline summary across each scenario's window once we
+    # know which windows we need (done in scenario loop below).
+    # For the baseline summary CSV, just dump the full-run mean.
+    full_window = (0, SCENARIO_2050_STEPS)
+    for mineral in ('lithium', 'nickel', 'platinum'):
+        s, _ = _summarize_ensemble(
+            baselines_2050[mineral], full_window[0], full_window[1],
+        )
+        s['mineral'] = mineral
+        s['window_start'] = full_window[0]
+        s['window_len'] = full_window[1]
+        base_summary_rows.append(s)
+    _write_ensemble_summary(base_dir, base_summary_rows)
+    for mineral in ('lithium', 'nickel', 'platinum'):
+        plot_ensemble_band(
+            base_dir, mineral,
+            baselines_2050[mineral],
+            window_start=full_window[0], window_len=full_window[1],
+        )
+
+    print("\n[ensemble] 2050 combined scenarios")
+    # Group by folder so we write one ensemble_summary.csv per folder
+    # (with multiple rows when a scenario covers more than one mineral).
+    by_folder: dict[str, list] = {}
+    for (mineral, folder), (embargoes, choke) in SCENARIOS_2050.items():
+        by_folder.setdefault(folder, []).append((mineral, embargoes, choke))
+
+    for folder, items in by_folder.items():
+        scenario_path = out_2050 / folder
+        scenario_path.mkdir(parents=True, exist_ok=True)
+        ws = SCENARIO_2050_WINDOW_START[folder]
+        wl = SCENARIO_2050_WINDOW_LEN[folder]
+        rows = []
+        for mineral, embargoes, choke in items:
+            print(f"  {folder} / {mineral}")
+            scen_dfs = _run_ensemble(
+                mineral, SCENARIO_2050_STEPS, scenario_path,
+                n_seeds=n_seeds, seed_base=seed_base,
+                embargoes=embargoes, chokepoint_crises=choke,
+                pool=pool,
+            )
+            summary, _ = _summarize_ensemble(
+                scen_dfs, ws, wl, base_dfs=baselines_2050[mineral],
+            )
+            summary['mineral'] = mineral
+            summary['window_start'] = ws
+            summary['window_len'] = wl
+            rows.append(summary)
+            plot_ensemble_band(
+                scenario_path, mineral,
+                scen_dfs, baseline_dfs=baselines_2050[mineral],
+                window_start=ws, window_len=wl,
+            )
+        _write_ensemble_summary(scenario_path, rows)
+
+
+def print_ensemble_summary(out_root: Path):
+    """Print a one-screen overview of every ensemble_summary.csv."""
+    print("\n=== ENSEMBLE SUMMARY ===")
+    for summary_path in sorted(out_root.rglob('ensemble_summary.csv')):
+        rel = summary_path.parent.relative_to(out_root)
+        df = pd.read_csv(summary_path)
+        print(f"\n{rel}")
+        for _, r in df.iterrows():
+            mineral = r['mineral']
+            scen_mean = r.get('scen_mean', float('nan'))
+            scen_std = r.get('scen_std', float('nan'))
+            if 'delta_mean_pct' in df.columns and not pd.isna(r.get('delta_mean_pct')):
+                d_mean = r['delta_mean_pct']
+                d_std = r['delta_std_pct']
+                d_p10 = r['delta_p10_pct']
+                d_p90 = r['delta_p90_pct']
+                print(
+                    f"  {mineral:8s}  scen=${scen_mean:>13,.0f} ± {scen_std:>11,.0f}  "
+                    f"Δ={d_mean:+6.2f}% ± {d_std:5.2f}%  "
+                    f"[p10 {d_p10:+6.2f}%, p90 {d_p90:+6.2f}%]"
+                )
+            else:
+                print(f"  {mineral:8s}  mean=${scen_mean:>13,.0f} ± {scen_std:>11,.0f}")
 
 
 def _in_window_avg(df: pd.DataFrame, start: int, length: int) -> float:
@@ -385,37 +772,87 @@ def plot_scenario_summary(out_root: Path, summary_rows: list[tuple]):
 # Main
 # ---------------------------------------------------------------------------
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Regenerate every committed simulation output. "
+            "With --n-seeds=1 (default) reproduces the legacy single-seed "
+            "behavior. With --n-seeds>1 runs paired ensembles for every "
+            "comparison-style scenario; per-seed CSVs land in the "
+            "gitignored ensemble_runs/ tree, while ensemble_summary.csv "
+            "and *_ensemble_band.png are committed alongside the regular "
+            "scenario outputs."
+        ),
+    )
+    parser.add_argument(
+        '--n-seeds', type=int, default=1,
+        help='Number of seeds per scenario (default 1 = single-seed).'
+    )
+    parser.add_argument(
+        '--seed-base', type=int, default=42,
+        help='Starting seed; ensemble uses [seed_base, seed_base+N-1].'
+    )
+    parser.add_argument(
+        '--n-workers', type=int, default=0,
+        help=(
+            'Parallel workers for ensemble runs. 0 = auto '
+            '(min(cpu_count, n_seeds)); 1 = sequential. Each seed-run '
+            'is fully independent so speedup is near-linear up to '
+            'n_seeds.'
+        ),
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     out_root = _REPO_ROOT / 'outputs'
     out_root.mkdir(parents=True, exist_ok=True)
 
-    baselines = regenerate_canonical_baselines(out_root)
-    li_embargo_rows = regenerate_li_embargo_scenarios(out_root, baselines['lithium'])
-    pt_embargo_rows = regenerate_pt_embargo_scenario(out_root, baselines['platinum'])
-    chokepoint_rows = regenerate_chokepoint_scenarios(out_root, baselines)
+    if args.n_seeds <= 1:
+        # Single-seed legacy path: produces the canonical
+        # outputs/{mineral}_*, scenario subdirs, and PNGs as before.
+        baselines = regenerate_canonical_baselines(out_root)
+        li_embargo_rows = regenerate_li_embargo_scenarios(out_root, baselines['lithium'])
+        pt_embargo_rows = regenerate_pt_embargo_scenario(out_root, baselines['platinum'])
+        chokepoint_rows = regenerate_chokepoint_scenarios(out_root, baselines)
 
-    plot_embargo_comparison(out_root, baselines['lithium'])
+        plot_embargo_comparison(out_root, baselines['lithium'])
 
-    _, scenario_2050_rows = regenerate_2050_scenarios(out_root)
-    plot_scenarios_2050(out_root)
-    plot_scenario_summary(out_root, scenario_2050_rows)
+        _, scenario_2050_rows = regenerate_2050_scenarios(out_root)
+        plot_scenarios_2050(out_root)
+        plot_scenario_summary(out_root, scenario_2050_rows)
 
-    print("\n=== SUMMARY ===")
-    print("\nLi embargo scenarios:")
-    for name, avg, delta in li_embargo_rows:
-        print(f"  {name:32s} ${avg:>11,.0f}  {delta:+6.2f}%")
+        print("\n=== SUMMARY ===")
+        print("\nLi embargo scenarios:")
+        for name, avg, delta in li_embargo_rows:
+            print(f"  {name:32s} ${avg:>11,.0f}  {delta:+6.2f}%")
 
-    print("\nPt embargo scenarios:")
-    for name, avg, delta in pt_embargo_rows:
-        print(f"  {name:32s} ${avg:>15,.0f}  {delta:+6.2f}%")
+        print("\nPt embargo scenarios:")
+        for name, avg, delta in pt_embargo_rows:
+            print(f"  {name:32s} ${avg:>15,.0f}  {delta:+6.2f}%")
 
-    print("\nChokepoint scenarios (24-week in-window):")
-    for mineral, folder, avg, base, delta in chokepoint_rows:
-        print(f"  {mineral:9s}/{folder:14s} avg=${avg:>13,.0f} base=${base:>13,.0f} {delta:+6.2f}%")
+        print("\nChokepoint scenarios (24-week in-window):")
+        for mineral, folder, avg, base, delta in chokepoint_rows:
+            print(f"  {mineral:9s}/{folder:14s} avg=${avg:>13,.0f} base=${base:>13,.0f} {delta:+6.2f}%")
 
-    print("\n2050 combined scenarios (in-window):")
-    for mineral, folder, base, avg, delta in scenario_2050_rows:
-        print(f"  {mineral:9s}/{folder:24s} base=${base:>13,.0f} avg=${avg:>13,.0f} {delta:+6.2f}%")
+        print("\n2050 combined scenarios (in-window):")
+        for mineral, folder, base, avg, delta in scenario_2050_rows:
+            print(f"  {mineral:9s}/{folder:24s} base=${base:>13,.0f} avg=${avg:>13,.0f} {delta:+6.2f}%")
+    else:
+        # Ensemble path. Skips the single-seed PNGs (each scenario gets
+        # one ensemble band plot instead). Produces ensemble_summary.csv
+        # at every scenario folder.
+        if args.n_workers <= 0:
+            n_workers = min(os.cpu_count() or 1, args.n_seeds)
+        else:
+            n_workers = max(1, args.n_workers)
+        regenerate_ensembles(
+            out_root,
+            n_seeds=args.n_seeds, seed_base=args.seed_base,
+            n_workers=n_workers,
+        )
+        print_ensemble_summary(out_root)
 
 
 if __name__ == '__main__':
