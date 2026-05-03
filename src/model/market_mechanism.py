@@ -88,6 +88,15 @@ def update_price(
             move = max_step_pct
         elif move < -max_step_pct:
             move = -max_step_pct
+    elif demand_flow > 0:
+        # Total supply collapse with demand still present -- this is
+        # the worst case (e.g. every mine mothballed). The log-ratio
+        # would be -infinity; saturate at the maximum upward move so
+        # the price keeps climbing each step until something restarts.
+        # Without this branch the imbalance signal silently flatlines
+        # at exactly zero supply, leaving the anchor (= restart
+        # threshold) as the equilibrium and preventing restarts.
+        move = max_step_pct
     else:
         move = 0.0
 
@@ -111,7 +120,7 @@ def update_price(
     return max(hard_floor, min(new_price, hard_ceiling))
 
 
-def marginal_cost(mines, demand_per_step):
+def marginal_cost(mines, demand_per_step, offline_premium=1.0):
     """Short-run merit-order marginal cost ($/ton).
 
     Walks operational mines (not mothballed, not currently disrupted) in
@@ -119,12 +128,20 @@ def marginal_cost(mines, demand_per_step):
     cost of the mine where cumulative capacity first meets
     ``demand_per_step``. If aggregate operational capacity falls short,
     returns the highest-cost operational mine (the binding marginal
-    producer at full system stretch). Falls back to the global cheapest
-    extraction cost when no mines are operational at all.
+    producer at full system stretch).
 
-    Mothballed mines aren't included because they aren't producing this
-    step. As price rises and triggers their restart, they rejoin the
-    cost curve naturally on subsequent steps.
+    When *no* mines are operational at all, returns
+    ``cheapest_extraction_cost * offline_premium``. The premium reflects
+    the fact that bringing a mothballed mine back online requires the
+    price to be above its restart threshold (typically 1.2x extraction
+    cost). Without the premium, the soft floor pins the price right at
+    the cheapest extraction cost -- below the restart threshold -- and
+    nothing ever restarts. Default ``1.0`` keeps backward-compatible
+    behavior when callers don't pass the model's restart margin.
+
+    Mothballed mines aren't counted in the operational walk because
+    they aren't producing this step. As price rises and triggers their
+    restart, they rejoin the cost curve naturally on subsequent steps.
     """
     if not mines:
         return 0.0
@@ -137,9 +154,11 @@ def marginal_cost(mines, demand_per_step):
         key=lambda m: m.extraction_cost,
     )
     if not operational:
-        # No active producers -- fall back to global cheapest cost so
-        # the anchor still has a meaningful target.
-        return min(m.extraction_cost for m in mines if m.extraction_cost > 0)
+        # No active producers -- the price needed to bring the cheapest
+        # mothballed mine back online is its extraction cost times the
+        # restart margin.
+        cheapest = min(m.extraction_cost for m in mines if m.extraction_cost > 0)
+        return cheapest * offline_premium
 
     cumulative = 0.0
     last_cost = operational[0].extraction_cost
@@ -153,8 +172,13 @@ def marginal_cost(mines, demand_per_step):
     return last_cost
 
 
-def cheapest_active_cost(mines):
-    """Cheapest extraction cost among operational mines, for the floor."""
+def cheapest_active_cost(mines, offline_premium=1.0):
+    """Cheapest extraction cost among operational mines, for the floor.
+
+    See ``marginal_cost`` for the rationale on ``offline_premium`` --
+    the fallback when no mines are operational also gets multiplied by
+    the premium so the soft floor lifts above the restart trigger.
+    """
     if not mines:
         return 0.0
     operational = [
@@ -163,7 +187,8 @@ def cheapest_active_cost(mines):
     ]
     if operational:
         return min(m.extraction_cost for m in operational)
-    return min(m.extraction_cost for m in mines if m.extraction_cost > 0)
+    cheapest = min(m.extraction_cost for m in mines if m.extraction_cost > 0)
+    return cheapest * offline_premium
 
 
 def check_geopolitical_event(probability, random_state=None):

@@ -20,7 +20,12 @@ class ProcessorAgent(Agent):
             facility: Facility name (e.g. 'Tianqi-Sichuan')
             conversion_efficiency: Fraction of ore converted to pure mineral (0-1)
             energy_cost: Cost per ton to process ($/ton)
-            capacity: Maximum processing capacity (tons of ore/step)
+            capacity: Output capacity (tons of post-conversion mineral/step)
+                as reported by the source CSVs (USGS / company nameplate).
+                The agent stores this as ``output_capacity`` and derives
+                input-throughput by dividing by ``conversion_efficiency``,
+                so an 82%-yield facility rated at 40 kt/yr Li output can
+                feed ~48.8 kt/yr of contained-Li input.
         """
         super().__init__(unique_id, model)
 
@@ -32,16 +37,25 @@ class ProcessorAgent(Agent):
         # Core attributes
         self.conversion_efficiency = conversion_efficiency
         self.energy_cost = energy_cost
-        self.capacity = capacity
+        # CSV reports capacity as post-conversion *output* tonnes/step (per
+        # the file headers, e.g. "contained Li metal output capacity").
+        # Internally we work in input-throughput because the per-step
+        # bottleneck is how much feedstock the plant can take. Output =
+        # input * efficiency.
+        self.output_capacity = capacity
+        self.capacity = (
+            capacity / conversion_efficiency
+            if conversion_efficiency > 0 else capacity
+        )
 
         # Inventory
         self.inventory = 0        # Processed mineral (post-conversion tonnes)
         self.raw_ore_buffer = 0   # Pre-conversion tonnes awaiting processing
 
         # Safety stock (don't sell below this level), in PROCESSED tonnes.
-        # 2 steps of *output* capacity, not 2 steps of input.
+        # N weeks of *output* capacity.
         safety_weeks = self.model.config.get("processor_safety_stock_weeks", 2.0)
-        self.safety_stock = capacity * conversion_efficiency * safety_weeks
+        self.safety_stock = self.output_capacity * safety_weeks
 
         # Inventory ceiling: stop purchasing ore once expected post-
         # processing inventory would exceed this cap. Modeled as weeks
@@ -49,7 +63,7 @@ class ProcessorAgent(Agent):
         # indefinitely when downstream demand collapses, masking the
         # supply/demand price signal and producing unbounded inventory.
         cap_weeks = self.model.config.get("processor_inventory_cap_weeks", 8.0)
-        self.inventory_cap = capacity * conversion_efficiency * cap_weeks
+        self.inventory_cap = self.output_capacity * cap_weeks
 
         # Tracking
         self.processed_this_step = 0
@@ -63,6 +77,22 @@ class ProcessorAgent(Agent):
         self.purchased_this_step = 0
         self.sold_this_step = 0
         self.recycled_received_this_step = 0
+
+        # 0. Capacity expansion. Mines and manufacturers already grow
+        #    with the demand curve; without symmetric processor growth a
+        #    24-year run that ramps demand ~10x leaves processors stuck
+        #    at 2024 levels and creates an artificial mid-stream
+        #    bottleneck. Growth is compounded per step (sticky like
+        #    mines, since refining capacity isn't easily torn down).
+        cfg = self.model.config
+        steps_per_year = cfg.get("steps_per_year", 52)
+        cap_growth_yr = cfg.get("processor_capacity_growth_per_year", 0.0)
+        if cap_growth_yr > 0:
+            mult = 1.0 + cap_growth_yr / steps_per_year
+            self.capacity *= mult
+            self.output_capacity *= mult
+            self.safety_stock *= mult
+            self.inventory_cap *= mult
 
         # 1. Purchase ore from mines
         self._purchase_ore()

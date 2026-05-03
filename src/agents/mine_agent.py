@@ -39,8 +39,9 @@ class MineAgent(Agent):
         #     incident or geopolitical event; counts down per step and
         #     auto-recovers at zero.
         #   mothballed: True means the mine has voluntarily shut down
-        #     because the price fell below extraction cost. It restarts
-        #     when price recovers above extraction_cost * restart_margin.
+        #     because the price fell below cash cost for a sustained
+        #     window (see low_price_counter). It restarts when price
+        #     recovers above extraction_cost * restart_margin.
         self.disruption_counter = 0
         self.mothballed = False
         # Restart lag: real mines can't simply re-open the moment price
@@ -50,6 +51,22 @@ class MineAgent(Agent):
         # extraction resumes once it ticks down to zero. Aborts back to
         # 0 if price drops below the restart threshold mid-restart.
         self.restart_counter = 0
+
+        # Sustained-pressure mothball logic. Real mines very rarely
+        # full-shutter on a single below-cost step -- offtake contracts,
+        # care-and-maintenance avoidance, and integrated operations keep
+        # them running at reduced rates until price has been below the
+        # *cash* cost (typically ~65% of all-in extraction cost) for
+        # several months. ``low_price_counter`` accumulates consecutive
+        # below-cash-cost steps and decrements on recovery; mothball
+        # fires only when it crosses ``mothball_trigger_steps``.
+        self.low_price_counter = 0
+        # Step at which this mine was last mothballed. Used to pick a
+        # warm restart lag (~3 months; equipment + crews still around)
+        # vs the cold default (~6 months) for mines that have been
+        # offline for over a year. Initialized very-negative so the
+        # first restart is always a cold one.
+        self.last_mothball_step = -10**9
 
         # Production tracking. Two views per step:
         #   available_production_this_step: gross output offered to the
@@ -72,6 +89,12 @@ class MineAgent(Agent):
         self.embargoed_production_this_step = 0
         self.domestic_stockpile = 0
         self.pithead_stockpile = 0.0
+        # Constant chunk size used by ``_release_stockpile`` for the
+        # linear post-embargo bleed. Set when an embargo lifts (= the
+        # initial stockpile divided by ``post_embargo_release_steps``)
+        # and reset to 0 when the stockpile is fully drained, so a
+        # subsequent embargo cycle starts a fresh release.
+        self._release_chunk_size = 0.0
 
     @property
     def operational(self):
@@ -139,26 +162,56 @@ class MineAgent(Agent):
             self._trigger_disruption()
             return
 
-        # Mothball / restart logic. We treat "shut down for low price" as
-        # a state separate from disruption so the mine actually reopens
-        # when the price recovers (previously it never did, because
-        # operational was set False but never restored).
+        # Mothball / restart logic. "Shut down for low price" is a state
+        # separate from disruption so the mine actually reopens when the
+        # price recovers.
         #
-        # Restarts incur a multi-step lag (config: mine_restart_lag_steps,
-        # default 26 weeks ~ 6 months) reflecting real-world rehiring
-        # and recommissioning. While restart_counter > 0 the mine has
-        # decided to restart but isn't yet producing. The restart aborts
-        # if price falls back below the threshold during the lag.
-        restart_margin = self.model.config.get("mine_restart_margin", 1.2)
-        restart_lag = int(self.model.config.get("mine_restart_lag_steps", 26))
+        # Trigger:
+        #   - Cash cost = extraction_cost * mine_cash_cost_fraction
+        #     (default 0.65; real cash costs are typically 50-70% of
+        #     AISC). Real mines stay open above cash cost via offtake
+        #     contracts and care-and-maintenance avoidance.
+        #   - Mothball fires only after low_price_counter >=
+        #     mothball_trigger_steps consecutive (net) below-cash-cost
+        #     steps (default 13 ~ 1 quarter). A single bad week
+        #     decrements again on recovery, so transient dips don't
+        #     accumulate.
+        #
+        # Restart:
+        #   - Same threshold as before: price > extraction_cost *
+        #     restart_margin (default 1.2x).
+        #   - Lag is ``warm_restart_lag_steps`` (default 12 weeks ~ 3
+        #     months) if the mine was mothballed within the last
+        #     ``warm_restart_window_steps`` (default 52); otherwise
+        #     ``mine_restart_lag_steps`` (default 26 ~ 6 months).
+        #     Real-world warm restarts are faster because crews and
+        #     equipment are still in place; cold restarts require
+        #     rehiring + recommissioning.
+        #   - Restart aborts if price falls back below the threshold
+        #     during the lag.
+        cfg = self.model.config
+        restart_margin = cfg.get("mine_restart_margin", 1.2)
+        cold_restart_lag = int(cfg.get("mine_restart_lag_steps", 26))
+        warm_restart_lag = int(cfg.get("mine_warm_restart_lag_steps", 12))
+        warm_window = int(cfg.get("mine_warm_restart_window_steps", 52))
+        trigger_steps = int(cfg.get("mothball_trigger_steps", 13))
+        cash_cost_fraction = float(cfg.get("mine_cash_cost_fraction", 0.65))
+        cash_cost = self.extraction_cost * cash_cost_fraction
         price = self.model.current_price
+
         if self.mothballed:
             if price > self.extraction_cost * restart_margin:
                 if self.restart_counter <= 0:
-                    self.restart_counter = max(1, restart_lag)
+                    steps_since = self.model.current_step - self.last_mothball_step
+                    effective_lag = (
+                        warm_restart_lag if steps_since <= warm_window
+                        else cold_restart_lag
+                    )
+                    self.restart_counter = max(1, effective_lag)
                 self.restart_counter -= 1
                 if self.restart_counter <= 0:
                     self.mothballed = False
+                    self.low_price_counter = 0
                 else:
                     return
             else:
@@ -166,10 +219,19 @@ class MineAgent(Agent):
                 self.restart_counter = 0
                 return
         else:
-            if price < self.extraction_cost:
-                self.mothballed = True
-                self.restart_counter = 0
-                return
+            if price < cash_cost:
+                self.low_price_counter += 1
+                if self.low_price_counter >= trigger_steps:
+                    self.mothballed = True
+                    self.last_mothball_step = self.model.current_step
+                    self.restart_counter = 0
+                    self.low_price_counter = 0
+                    return
+            else:
+                # Net-decrement on recovery: a quarter of "fine, fine,
+                # bad, fine, fine" doesn't slowly accumulate to a
+                # mothball. Sustained pressure is what matters.
+                self.low_price_counter = max(0, self.low_price_counter - 1)
 
         # Produce minerals if reserves remain.
         if self.reserves > 0:
@@ -205,8 +267,13 @@ class MineAgent(Agent):
             self.domestic_stockpile += output
             self.embargoed_production_this_step = output
         else:
-            self.production_this_step = output
-            self.available_production_this_step = output
+            # `+=` (not `=`) so this step's pithead carry-forward and any
+            # post-embargo stockpile release are preserved. Assignment
+            # here silently zeroed those flows -- breaking mineral mass
+            # conservation whenever a mine had inventory waiting and
+            # also produced new material the same step.
+            self.production_this_step += output
+            self.available_production_this_step += output
 
     def _utilization_factor(self):
         """Return a multiplier on production_capacity based on price.
@@ -243,32 +310,51 @@ class MineAgent(Agent):
         return utilization / baseline if baseline > 0 else 1.0
 
     def _release_stockpile(self):
-        """Release a fraction of the post-embargo stockpile onto the market.
+        """Release the post-embargo stockpile linearly onto the market.
 
-        Bled out over many steps (default ~26 weeks) rather than dumped at
-        once, so a long embargo doesn't translate into a single-step
-        supply shock when it lifts. The release adds to the same
-        available_production_this_step bucket the price signal uses and
-        the same production_this_step bucket processors purchase from.
+        Bled out over ``post_embargo_release_steps`` steps (default 26 ~
+        6 months) rather than dumped at once, so a long embargo doesn't
+        translate into a single-step supply shock when it lifts.
+
+        ``_release_chunk_size`` is frozen the first step a release runs
+        (i.e. embargo just lifted) at ``initial_stockpile /
+        release_steps``, so each subsequent step releases the same
+        absolute tonnage and the stockpile reaches zero in exactly
+        ``release_steps`` steps. The previous version recomputed
+        ``stockpile / release_steps`` each step, producing geometric
+        decay (~63% drained in ``release_steps`` steps; the dead
+        "drain remainder" branch never triggered).
         """
         release_steps = max(
             1, int(self.model.config.get("post_embargo_release_steps", 26))
         )
-        chunk = self.domestic_stockpile / release_steps
-        # Below ~1 step's worth of float dust, just drain the remainder
-        # so the stockpile doesn't asymptote forever.
-        if self.domestic_stockpile <= chunk * 1.01:
-            chunk = self.domestic_stockpile
+        if self._release_chunk_size <= 0:
+            self._release_chunk_size = self.domestic_stockpile / release_steps
+        chunk = min(self._release_chunk_size, self.domestic_stockpile)
         self.domestic_stockpile -= chunk
         self.production_this_step += chunk
         self.available_production_this_step += chunk
+        # Once the stockpile is essentially empty, reset so the next
+        # embargo-then-lift cycle freezes a fresh chunk size.
+        if self.domestic_stockpile <= 1e-9:
+            self.domestic_stockpile = 0.0
+            self._release_chunk_size = 0.0
 
     def _trigger_disruption(self):
-        """Trigger a random disruption event."""
+        """Trigger a random disruption event.
+
+        Uses ``max(...)`` so a routine 3-5 step random incident can't
+        shorten an active longer geopolitical disruption (which is set
+        via ``apply_geopolitical_disruption`` and is typically 5-15
+        steps). Without this, a random roll during a major embargo
+        could quietly halve the modeled outage window.
+        """
         duration_min = self.model.config.get("disruption_duration_min", 3)
         duration_max = self.model.config.get("disruption_duration_max", 5)
         rng = self.model.random_state
-        self.disruption_counter = rng.randint(duration_min, duration_max)
+        self.disruption_counter = max(
+            self.disruption_counter, rng.randint(duration_min, duration_max),
+        )
 
     def apply_geopolitical_disruption(self, duration):
         """Apply a geopolitical disruption to this mine.

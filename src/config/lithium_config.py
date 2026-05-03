@@ -95,12 +95,32 @@ LITHIUM_CONFIG = {
     # Li mine production grew ~30%/yr 2020-24; assume gradual moderation
     # to ~7-8%/yr CAGR over 2024-50 (consistent with IEA NetZero ramp).
     "mine_capacity_growth_per_year": 0.075,
+    # Li chemical conversion capacity has been growing in lock-step with
+    # mining (China-led brownfield + greenfield builds). Use the same
+    # 7.5%/yr blended CAGR so refining keeps pace with mine growth.
+    "processor_capacity_growth_per_year": 0.075,
     # Exploration replaces ~70% of extraction (Li reserves grew over the
     # past decade despite production growth).
     "reserve_replacement_rate": 0.70,
     # Restart lag for a mothballed mine: ~6 months to dewater, rehire,
     # recommission for hard-rock; less for brine. Use 26 weeks across.
     "mine_restart_lag_steps": 26,
+    # Warm restart -- equipment in place, rehiring within 3 months -- if
+    # the mine was mothballed within the last year. Real-world warm
+    # restarts are noticeably faster than cold ones (e.g., Mt Cattlin
+    # restart was ~10 weeks after a <1y pause).
+    "mine_warm_restart_lag_steps": 12,
+    "mine_warm_restart_window_steps": 52,
+    # Sustained-pressure mothball: mine only mothballs after ~12 months
+    # of price below cash cost. Real Li mines almost never full-shutter
+    # on a single below-cost week; offtake contracts and care-and-
+    # maintenance avoidance keep them running. Even in the 2022-24
+    # crash, only marginal Australian operations (Bald Hill, Mt Cattlin)
+    # paused, and only after several months of sustained weakness.
+    "mothball_trigger_steps": 52,
+    # Cash cost = ~65% of extraction (AISC) cost. Mines stay open
+    # above cash cost; mothball trigger only counts steps below it.
+    "mine_cash_cost_fraction": 0.65,
     # Demand scenario to interpolate against (matches scenario column in
     # demand.csv). Use the IEA NetZero rows by default.
     "demand_scenario": "NetZero",

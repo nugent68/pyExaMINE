@@ -11,7 +11,6 @@ earlier in the same step queue with the full lead time).
 """
 
 from mesa import Model
-from mesa.time import BaseScheduler
 from mesa.datacollection import DataCollector
 import numpy as np
 import random
@@ -94,7 +93,10 @@ class MineralSupplyChainModel(Model):
         self.consumers = []
         self.transport_agents = []
 
-        self.schedule = BaseScheduler(self)
+        # Time counter. Mesa's BaseScheduler is not used here -- the
+        # supply-chain ordering is enforced by the per-tier loop in
+        # ``step()`` rather than a Mesa activation strategy, so all
+        # time-tracking flows through ``current_step``.
         self.current_step = 0
 
         self._load_data_and_create_agents()
@@ -234,7 +236,6 @@ class MineralSupplyChainModel(Model):
                 extraction_cost=m['extraction_cost'],
                 reserves=m['reserves'],
             )
-            self.schedule.add(mine)
             self.mines.append(mine)
         print(f"Created {len(self.mines)} mines across "
               f"{len({a.country for a in self.mines})} countries")
@@ -267,7 +268,6 @@ class MineralSupplyChainModel(Model):
                 processing_cost=r['processing_cost'],
                 capacity_per_step=r['capacity'] / steps_per_year,
             )
-            self.schedule.add(recycler)
             self.recyclers.append(recycler)
         print(f"Created {len(self.recyclers)} recyclers across "
               f"{len({a.country for a in self.recyclers})} countries")
@@ -288,7 +288,6 @@ class MineralSupplyChainModel(Model):
                 capacity=p['capacity'] / steps_per_year,
             )
             processor.inventory = processor.safety_stock * warmstart_mult
-            self.schedule.add(processor)
             self.processors.append(processor)
         print(f"Created {len(self.processors)} processors across "
               f"{len({a.country for a in self.processors})} countries")
@@ -314,7 +313,6 @@ class MineralSupplyChainModel(Model):
                 production_capacity=cap,
             )
             mfr.input_inventory = mfr.target_inventory * warmstart_frac
-            self.schedule.add(mfr)
             self.manufacturers.append(mfr)
         print(f"Created {len(self.manufacturers)} manufacturer aggregates "
               f"(one per producing country)")
@@ -343,7 +341,6 @@ class MineralSupplyChainModel(Model):
             # mineral content -- biasing recycling rates downward for the
             # first ~10 years of any run.
             retailer.inventory_mineral = retailer.inventory * intensity
-            self.schedule.add(retailer)
             self.retailers.append(retailer)
         print(f"Created {len(self.retailers)} retailers (one per consumer country)")
 
@@ -362,7 +359,6 @@ class MineralSupplyChainModel(Model):
                 base_demand=base_demand,
                 price_sensitivity=price_sensitivity,
             )
-            self.schedule.add(consumer)
             self.consumers.append(consumer)
         print(f"Created {len(self.consumers)} consumers (one per consumer country)")
 
@@ -385,7 +381,6 @@ class MineralSupplyChainModel(Model):
                     cost_per_unit=costs.get(mode, 20),
                     capacity=entry['capacity_per_agent'],
                 )
-                self.schedule.add(t)
                 self.transport_agents.append(t)
         print(f"Created {len(self.transport_agents)} transport agents across "
               f"{len({a.country for a in self.transport_agents})} countries")
@@ -398,11 +393,27 @@ class MineralSupplyChainModel(Model):
         """Pick a transport agent of the given mode, preferring a country.
 
         Returns the chosen agent, or None if the fleet is empty.
+
+        If no agent of ``mode`` exists *anywhere* in the fleet (a data
+        problem -- e.g. routing returns 'rail' but no rail agent was
+        loaded), we fall back to a mode-agnostic pick so the simulation
+        keeps running, but emit a one-time warning per missing mode so
+        the gap is visible. Previously this fallback was silent and a
+        ship route could end up carried by a truck agent without notice.
         """
         if not self.transport_agents:
             return None
         mode_pool = [t for t in self.transport_agents if t.mode == mode]
         if not mode_pool:
+            if not hasattr(self, '_warned_missing_modes'):
+                self._warned_missing_modes = set()
+            if mode not in self._warned_missing_modes:
+                print(
+                    f"Warning: no transport agents of mode '{mode}' in the "
+                    f"fleet; subsequent shipments routed through this mode "
+                    f"will fall back to a mode-agnostic carrier."
+                )
+                self._warned_missing_modes.add(mode)
             mode_pool = list(self.transport_agents)
         if prefer_country:
             local = [t for t in mode_pool if t.country == prefer_country]
@@ -422,14 +433,13 @@ class MineralSupplyChainModel(Model):
         if quantity <= 0:
             return False
 
-        route = select_route_or_fallback(
+        # routing.select_route_or_fallback always returns a route (the
+        # routing module's get_routes falls back to a generic 5-week
+        # ship leg for unknown country pairs), so we don't need an extra
+        # None-guard here.
+        chokepoints, lead_time, mode = select_route_or_fallback(
             origin_country, dest_country, set(self.closed_chokepoints),
         )
-        if route is None:
-            # Truly unknown country pair -- treat as direct, 1-step truck.
-            chokepoints, lead_time, mode = ([], 1, 'truck')
-        else:
-            chokepoints, lead_time, mode = route
 
         transport = self.select_transport(mode, prefer_country=origin_country)
         if transport is None:
@@ -472,9 +482,6 @@ class MineralSupplyChainModel(Model):
             for agent in order:
                 agent.step()
 
-        self.schedule.steps += 1
-        self.schedule.time += 1
-
         # 4. Update global price.
         self._update_price()
         # 5. Collect data.
@@ -515,10 +522,18 @@ class MineralSupplyChainModel(Model):
                       f"{duration} steps (starting step {self.current_step})")
 
     def _check_chokepoint_crises(self):
-        """Tick existing chokepoint closures and start scheduled ones."""
+        """Tick existing chokepoint closures and start scheduled ones.
+
+        ``end_step`` is set when the crisis fires as ``start_step +
+        duration`` and represents the *first open step*. The chokepoint
+        should therefore be removed when ``current_step`` reaches
+        ``end_step`` -- not one step earlier. The previous condition
+        ``end <= current_step + 1`` shortened every closure by one step
+        (an 8-week Suez crisis was actually 7 weeks of closure).
+        """
         for cp in list(self.closed_chokepoints):
             end = self.closed_chokepoints[cp]
-            if end <= self.current_step + 1:
+            if end <= self.current_step:
                 del self.closed_chokepoints[cp]
                 print(f"Chokepoint reopened: {cp} at step {self.current_step}")
 
@@ -588,8 +603,22 @@ class MineralSupplyChainModel(Model):
         # imbalance. The cost curve is computed live from the mine
         # state so depletion / mothballing / capacity expansion all
         # flow through to the price band.
-        self._marginal_cost = marginal_cost(self.mines, demand_smoothed)
-        self._cheapest_cost = cheapest_active_cost(self.mines)
+        #
+        # ``offline_premium`` lifts the all-mines-mothballed fallback
+        # above the cheapest extraction cost. Without it, the soft
+        # floor would pin the price exactly at extraction_cost -- which
+        # is below the restart threshold (extraction_cost * 1.2) --
+        # creating a self-locking trap where everyone mothballs and no
+        # one restarts. The premium matches the restart margin so the
+        # implied break-even price is the price needed to actually
+        # bring something back online.
+        restart_margin = float(self.config.get("mine_restart_margin", 1.2))
+        self._marginal_cost = marginal_cost(
+            self.mines, demand_smoothed, offline_premium=restart_margin,
+        )
+        self._cheapest_cost = cheapest_active_cost(
+            self.mines, offline_premium=restart_margin,
+        )
 
         elasticity = float(self.config.get("price_elasticity", 0.4))
         max_step_pct = float(self.config.get("price_max_step_pct", 0.15))

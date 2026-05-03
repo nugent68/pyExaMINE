@@ -90,11 +90,29 @@ NICKEL_CONFIG = {
     # Indonesian Ni capacity has been growing ~15%/yr; global Ni more like
     # 3-4%/yr blended. Use 0.04 as a globally representative CAGR.
     "mine_capacity_growth_per_year": 0.04,
+    # Refining capacity tracks mining (Indonesian RKEF + HPAL builds);
+    # use the same blended CAGR as mining.
+    "processor_capacity_growth_per_year": 0.04,
     # Ni exploration is mature; modest replacement.
     "reserve_replacement_rate": 0.50,
     # Restart lag (open-pit Ni laterite restart is somewhat faster than
     # underground; HPAL plants take longer). 26 weeks is a fair average.
     "mine_restart_lag_steps": 26,
+    # Warm restart for recently-mothballed Ni operations. Indonesian
+    # RKEF can warm-restart in ~2 months; Australian sulphide closer
+    # to 4. Use 12 weeks as a portfolio average.
+    "mine_warm_restart_lag_steps": 12,
+    "mine_warm_restart_window_steps": 52,
+    # Sustained-pressure mothball: ~12 months of below-cash-cost. The
+    # 2024 Australian Ni mothballs (BHP Nickel West, Wyloo Kambalda)
+    # followed roughly 9-12 months of below-cost prices; Indonesian
+    # operations have ridden out longer dips. 52 weeks reflects the
+    # realistic strategic-decision horizon rather than a knife-edge
+    # quarterly trigger.
+    "mothball_trigger_steps": 52,
+    # Cash cost ~65% of all-in cost; varies (Indonesian RKEF lower,
+    # Australian sulphide higher) but 0.65 is a reasonable blend.
+    "mine_cash_cost_fraction": 0.65,
     "demand_scenario": "NetZero",
 
     # Simulation parameters

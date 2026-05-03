@@ -92,9 +92,26 @@ PLATINUM_CONFIG = {
     # declining. Allow modest 1%/yr nominal growth to keep pace with
     # demand from fuel-cell adoption.
     "mine_capacity_growth_per_year": 0.01,
+    # PGM smelting/refining capacity is similarly mature (Anglo, Sibanye
+    # base loads). Match the 1%/yr nominal growth.
+    "processor_capacity_growth_per_year": 0.01,
     "reserve_replacement_rate": 0.30,
     # Pt mining is deep underground; restart is slower (~9-12 months).
     "mine_restart_lag_steps": 40,
+    # Even a "warm" Pt restart takes longer than other minerals
+    # because of underground reconditioning. ~6 months.
+    "mine_warm_restart_lag_steps": 26,
+    "mine_warm_restart_window_steps": 78,
+    # Pt operations very rarely full-shutter; mothballs at the shaft
+    # level (e.g., Sibanye Stillwater 2024) typically follow ~12 months
+    # of below-cost. 52 weeks matches the historical pattern from the
+    # 2008-09 crash and 2014-16 weakness, both of which produced
+    # closures only after roughly a year of sustained pressure.
+    "mothball_trigger_steps": 52,
+    # Pt cash cost is meaningfully below all-in cost thanks to
+    # by-product credits (Pd, Rh, Ni). 0.6 keeps the trigger sensitive
+    # to truly bad markets without firing on normal margin compression.
+    "mine_cash_cost_fraction": 0.60,
     "demand_scenario": "NetZero",
 
     # Simulation parameters
