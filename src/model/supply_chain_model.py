@@ -170,6 +170,14 @@ class MineralSupplyChainModel(Model):
         data = load_mineral_data(self.mineral_type)
         self._resolve_baseline_demand(data['demand'])
 
+        # Country -> 2024 nominal GDP ($B) lookup, used to scale the
+        # number of consumer / retailer / manufacturer agents per
+        # country. Stored on the model so all three creators can see
+        # the same table and the heterogeneity is consistent across
+        # tiers (USA gets the same N for consumers, retailers, and
+        # any manufacturer entry that lists USA).
+        self._country_gdp = data.get('country_gdp', {})
+
         # Creation order matches the tier order; transport last because
         # downstream agents reference no transport-specific state at init.
         self._create_mines(data['mines'])
@@ -179,6 +187,24 @@ class MineralSupplyChainModel(Model):
         self._create_retailers(data['consumer_countries'])
         self._create_consumers(data['consumer_countries'])
         self._create_transport(data['transport_fleet'])
+
+    def _agents_per_country(self, country: str) -> int:
+        """How many downstream agents to create for ``country``.
+
+        Returns max(1, round(gdp_billion / agents_per_gdp_billion)).
+        Countries not in country_gdp.csv get N=1, preserving "Other
+        countries" / Madagascar / Cuba / etc. without inflating their
+        agent footprint. Default 500 means USA ($28T) -> 56 agents,
+        China ($18T) -> 36, Germany ($4.5T) -> 9, all the way down
+        to top-30 cutoff (~$500B) -> 1, then everyone else -> 1.
+        """
+        per_billion = float(self.config.get("agents_per_gdp_billion", 500.0))
+        if per_billion <= 0:
+            return 1
+        gdp = self._country_gdp.get(country, 0.0)
+        if gdp <= 0:
+            return 1
+        return max(1, int(round(gdp / per_billion)))
 
     def _resolve_baseline_demand(self, demand_data):
         """Set baseline_mineral_demand_per_step + build the demand curve.
@@ -349,83 +375,132 @@ class MineralSupplyChainModel(Model):
               f"{len({a.country for a in self.processors})} countries")
 
     def _create_manufacturers(self, country_shares):
-        """One manufacturer per producing country, sized to share of global product demand."""
+        """Create per-country manufacturer agents, fanned out by GDP.
+
+        Each (country, total_share) entry from
+        {mineral}_manufacturers.csv is split into N agents, where
+        N = self._agents_per_country(country) (so e.g. USA gets 56,
+        China 36, Hungary 1). Each agent gets share = total_share / N
+        and capacity = total_capacity * share, so the per-country
+        aggregate is unchanged -- only the *granularity* increases.
+        """
         intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
         headroom = self.config.get("manufacturer_capacity_headroom", 1.5)
         warmstart_frac = self.config.get("manufacturer_warmstart_input_fraction", 0.5)
 
-        # Total nameplate sized to baseline product demand x headroom.
         total_capacity = self.baseline_product_demand_per_step * headroom
 
+        per_country_counts: dict[str, int] = {}
         for entry in country_shares:
             country = entry['country']
-            share = entry['share']
-            cap = total_capacity * share
-            mfr = ManufacturerAgent(
-                unique_id=self.next_id(),
-                model=self,
-                country=country,
-                mineral_intensity=intensity,
-                production_capacity=cap,
-            )
-            mfr.input_inventory = mfr.target_inventory * warmstart_frac
-            self.manufacturers.append(mfr)
-        print(f"Created {len(self.manufacturers)} manufacturer aggregates "
-              f"(one per producing country)")
+            total_share = entry['share']
+            n_agents = self._agents_per_country(country)
+            per_country_counts[country] = n_agents
+            per_agent_share = total_share / n_agents
+            for i in range(n_agents):
+                cap = total_capacity * per_agent_share
+                mfr = ManufacturerAgent(
+                    unique_id=self.next_id(),
+                    model=self,
+                    country=country,
+                    mineral_intensity=intensity,
+                    production_capacity=cap,
+                )
+                mfr.input_inventory = mfr.target_inventory * warmstart_frac
+                if n_agents > 1:
+                    mfr.label = f"{country}/manufacturers#{i+1}"
+                self.manufacturers.append(mfr)
+        n_countries = len(per_country_counts)
+        n_total = len(self.manufacturers)
+        print(f"Created {n_total} manufacturer agents across {n_countries} "
+              f"countries (GDP-scaled: max {max(per_country_counts.values())} "
+              f"per country)")
 
     def _create_retailers(self, country_shares):
-        """One retailer per consumer country, sized to that country's demand share.
+        """Create per-country retailer agents, fanned out by GDP.
 
-        The retailer's reorder_point and order_quantity are properties
-        on RetailerAgent that scale with demand_growth_factor each
-        access -- we pass the 2024 baseline demand and the multipliers,
-        not pre-computed values, so the policy automatically tracks
-        the configured demand trajectory (Li 10x by 2050, Ni 2x, Pt
-        2.4x) instead of starving consumers as demand grows.
+        Each (country, total_share) is split into N agents (USA 56,
+        China 36, etc. via _agents_per_country). Each agent's
+        base_country_demand = country_total_demand / N, so per-country
+        aggregate demand and the (s, Q) sizing per agent are
+        consistent. The realised-demand EWMA tracks each agent
+        individually -- consumers in the same country still distribute
+        their requests across all local retailers (shuffled) so the
+        load is balanced.
         """
         reorder_mult = self.config.get("retailer_reorder_point_multiplier", 2.0)
         order_mult = self.config.get("retailer_order_quantity_multiplier", 3.0)
         intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
 
+        per_country_counts: dict[str, int] = {}
         for entry in country_shares:
             country = entry['country']
-            share = entry['share']
-            country_demand = self.baseline_product_demand_per_step * share
-            retailer = RetailerAgent(
-                unique_id=self.next_id(),
-                model=self,
-                country=country,
-                base_country_demand=country_demand,
-                reorder_mult=reorder_mult,
-                order_mult=order_mult,
-            )
-            # Warm-start the embedded mineral content of starting inventory
-            # to the baseline manufacturer intensity. Without this, the
-            # first product-lifetime cycle of EOL deposits is silently
-            # zeroed because the warm-start stock is treated as having no
-            # mineral content -- biasing recycling rates downward for the
-            # first ~10 years of any run.
-            retailer.inventory_mineral = retailer.inventory * intensity
-            self.retailers.append(retailer)
-        print(f"Created {len(self.retailers)} retailers (one per consumer country)")
+            total_share = entry['share']
+            n_agents = self._agents_per_country(country)
+            per_country_counts[country] = n_agents
+            per_agent_share = total_share / n_agents
+            country_demand = self.baseline_product_demand_per_step * per_agent_share
+            for i in range(n_agents):
+                retailer = RetailerAgent(
+                    unique_id=self.next_id(),
+                    model=self,
+                    country=country,
+                    base_country_demand=country_demand,
+                    reorder_mult=reorder_mult,
+                    order_mult=order_mult,
+                )
+                # Warm-start the embedded mineral content of starting
+                # inventory to the baseline manufacturer intensity.
+                # Without this, the first product-lifetime cycle of EOL
+                # deposits is silently zeroed because the warm-start
+                # stock is treated as having no mineral content --
+                # biasing recycling rates downward for the first ~10
+                # years of any run.
+                retailer.inventory_mineral = retailer.inventory * intensity
+                if n_agents > 1:
+                    retailer.label = f"{country}/retail#{i+1}"
+                self.retailers.append(retailer)
+        n_total = len(self.retailers)
+        n_countries = len(per_country_counts)
+        print(f"Created {n_total} retailer agents across {n_countries} "
+              f"countries (GDP-scaled: max {max(per_country_counts.values())} "
+              f"per country)")
 
     def _create_consumers(self, country_shares):
-        """One consumer per country, sized to that country's share of global demand."""
+        """Create per-country consumer agents, fanned out by GDP.
+
+        Each (country, total_share) is split into N agents matching
+        the retailer fan-out. Each consumer agent gets base_demand =
+        country_total_demand / N. _purchase_from_retailers already
+        shuffles local retailers per call, so the load is balanced
+        across the N retailers in the same country.
+        """
         price_sensitivity = self.config.get("consumer_price_sensitivity", -0.8)
 
+        per_country_counts: dict[str, int] = {}
         for entry in country_shares:
             country = entry['country']
-            share = entry['share']
-            base_demand = self.baseline_product_demand_per_step * share
-            consumer = ConsumerAgent(
-                unique_id=self.next_id(),
-                model=self,
-                country=country,
-                base_demand=base_demand,
-                price_sensitivity=price_sensitivity,
-            )
-            self.consumers.append(consumer)
-        print(f"Created {len(self.consumers)} consumers (one per consumer country)")
+            total_share = entry['share']
+            n_agents = self._agents_per_country(country)
+            per_country_counts[country] = n_agents
+            per_agent_share = total_share / n_agents
+            base_demand = self.baseline_product_demand_per_step * per_agent_share
+            for i in range(n_agents):
+                consumer = ConsumerAgent(
+                    unique_id=self.next_id(),
+                    model=self,
+                    country=country,
+                    base_demand=base_demand,
+                    price_sensitivity=price_sensitivity,
+                )
+                if n_agents > 1:
+                    consumer.label = f"{country}/consumers#{i+1}"
+                self.consumers.append(consumer)
+        n_total = len(self.consumers)
+        n_countries = len(per_country_counts)
+        print(f"Created {n_total} consumer agents across {n_countries} "
+              f"countries (GDP-scaled: max {max(per_country_counts.values())} "
+              f"per country)")
 
     def _create_transport(self, fleet_data):
         """Create per-country transport agents from the fleet table."""

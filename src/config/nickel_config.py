@@ -119,6 +119,9 @@ NICKEL_CONFIG = {
     "mine_cash_cost_fraction": 0.65,
     "demand_scenario": "NetZero",
 
+    # Per-country agent fan-out (see lithium_config.py for full notes).
+    "agents_per_gdp_billion": 500.0,
+
     # Simulation parameters
     "n_steps": 200,
     "random_seed": 42,

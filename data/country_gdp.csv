@@ -1,0 +1,38 @@
+# Top 30 countries by 2024 nominal GDP (USD billions).
+# Sources: IMF World Economic Outlook 2024, World Bank 2024 estimates.
+# Used by the supply-chain model to scale per-country agent counts:
+# each (country, share) entry in a {mineral}_consumers.csv or
+# {mineral}_manufacturers.csv is fanned out into max(1, round(gdp /
+# agents_per_gdp_billion)) agents whose individual share = total
+# country share / N. Countries not in this table get N=1.
+country,gdp_2024_usd_billion
+USA,28000
+China,18000
+Germany,4500
+Japan,4100
+India,3900
+UK,3600
+France,3100
+Italy,2400
+Brazil,2300
+Canada,2200
+Russia,2200
+Mexico,2000
+Korea,1900
+Australia,1700
+Spain,1700
+Indonesia,1500
+Turkey,1300
+Netherlands,1200
+Saudi Arabia,1100
+Switzerland,900
+Poland,900
+Taiwan,800
+Belgium,700
+Sweden,600
+Argentina,600
+Ireland,600
+Norway,550
+Thailand,550
+Israel,550
+UAE,500

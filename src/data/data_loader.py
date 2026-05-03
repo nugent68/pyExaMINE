@@ -155,6 +155,28 @@ def load_demand(mineral: str) -> Dict[str, float]:
     return out
 
 
+def load_country_gdp() -> Dict[str, float]:
+    """Return {country: gdp_2024_usd_billion}.
+
+    Read from data/country_gdp.csv (top 30 nominal GDP, 2024). Used
+    by the supply-chain model to scale per-country agent counts:
+    each (country, share) entry in a {mineral}_consumers.csv or
+    {mineral}_manufacturers.csv is fanned out into max(1, round(gdp /
+    agents_per_gdp_billion)) agents (so e.g. China at $18T expands
+    to 36 agents when the knob is 500). Countries not in this table
+    get N=1, preserving small / non-listed entries (e.g. "Other
+    countries", Madagascar) without any size inflation.
+    """
+    path = _data_dir() / 'country_gdp.csv'
+    if not path.exists():
+        return {}
+    df = _read_csv(path)
+    out: Dict[str, float] = {}
+    for _, r in df.iterrows():
+        out[str(r['country']).strip()] = float(r['gdp_2024_usd_billion'])
+    return out
+
+
 def load_transport_fleet() -> List[Dict]:
     """Return list of transport-agent specs across all countries / modes.
 
@@ -191,4 +213,5 @@ def load_mineral_data(mineral: str) -> Dict:
         'consumer_countries':     load_consumer_countries(mineral),
         'demand':                 load_demand(mineral),
         'transport_fleet':        load_transport_fleet(),
+        'country_gdp':            load_country_gdp(),
     }

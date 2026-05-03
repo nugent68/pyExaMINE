@@ -140,6 +140,16 @@ LITHIUM_CONFIG = {
     # demand.csv). Use the IEA NetZero rows by default.
     "demand_scenario": "NetZero",
 
+    # Per-country agent fan-out. Each (country, share) entry in
+    # {mineral}_consumers.csv and {mineral}_manufacturers.csv is split
+    # into max(1, round(gdp_billion / agents_per_gdp_billion)) agents
+    # whose individual share = total / N. Default 500 -> USA (28T) gets
+    # 56 agents, China (18T) 36, Germany (4.5T) 9, etc., down to the
+    # top-30 cutoff (~$500B) at 1 agent. Countries not in
+    # data/country_gdp.csv get N=1, preserving "Other countries" /
+    # Madagascar / Cuba entries without inflation.
+    "agents_per_gdp_billion": 500.0,
+
     # Simulation parameters
     "n_steps": 200,
     "random_seed": 42,
