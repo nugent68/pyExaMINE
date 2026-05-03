@@ -65,6 +65,11 @@ PLATINUM_CONFIG = {
     # Consumer behavior (less price-sensitive due to no alternatives)
     "consumer_price_sensitivity": -0.5,
     "consumer_demand_threshold_multiplier": 2.5,
+    # Non-mineral component of finished-product price ($/unit). The Pt
+    # consumer unit is roughly a vehicle whose autocat carries Pt; use
+    # a vehicle base price so elasticity sees the realistic share of
+    # mineral cost in the consumer-facing good.
+    "consumer_product_base_price": 30000,
     
     # Retailer inventory policy
     "retailer_reorder_point_multiplier": 2.5,  # Higher safety stock
@@ -74,6 +79,16 @@ PLATINUM_CONFIG = {
     # Manufacturer inventory
     "manufacturer_target_inventory_weeks": 6,  # Longer due to supply concentration
     
+    # Capacity expansion + reserve replacement
+    # Pt is very mature; Bushveld output is roughly flat to slightly
+    # declining. Allow modest 1%/yr nominal growth to keep pace with
+    # demand from fuel-cell adoption.
+    "mine_capacity_growth_per_year": 0.01,
+    "reserve_replacement_rate": 0.30,
+    # Pt mining is deep underground; restart is slower (~9-12 months).
+    "mine_restart_lag_steps": 40,
+    "demand_scenario": "NetZero",
+
     # Simulation parameters
     "n_steps": 200,
     "random_seed": 42,

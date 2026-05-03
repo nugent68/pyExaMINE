@@ -125,7 +125,16 @@ class MineralSupplyChainModel(Model):
         self._create_transport(data['transport_fleet'])
 
     def _resolve_baseline_demand(self, demand_data):
-        """Set baseline_mineral_demand_per_step from data + config fallback."""
+        """Set baseline_mineral_demand_per_step + build the demand curve.
+
+        Reads any (year, scenario) rows present in demand.csv and builds a
+        list of (step, annual_demand) knots. baseline_* attributes are
+        anchored at the 2024 row so existing capacity-sizing logic still
+        works; demand growth is applied via a multiplier returned by
+        ``demand_growth_factor(step)``. The 2024 row is the anchor; later
+        rows (e.g., 2030_NetZero, 2050_NetZero) drive linear interpolation
+        between knots so a 24-year run actually sees demand grow.
+        """
         baseline = 0.0
         if demand_data and '2024' in demand_data and demand_data['2024'] > 0:
             baseline = float(demand_data['2024'])
@@ -136,15 +145,75 @@ class MineralSupplyChainModel(Model):
 
         steps_per_year = self.config.get('steps_per_year', 52)
         intensity = self.config.get('manufacturer_mineral_intensity', 0.008)
+        base_year = int(self.config.get('base_year', 2024))
 
         self.baseline_mineral_demand_tons_per_year = baseline
         self.baseline_mineral_demand_per_step = baseline / steps_per_year
         self.baseline_product_demand_per_step = self.baseline_mineral_demand_per_step / intensity
 
-        print(
-            f"Mineral demand: {self.baseline_mineral_demand_per_step:,.2f} t/step "
-            f"-> Product demand: {self.baseline_product_demand_per_step:,.2f} units/step"
-        )
+        # Build demand-curve knots: [(step, annual_demand_tons), ...]
+        # The 2024 (base-year) row is always step 0. Future rows (e.g.,
+        # '2030_NetZero', '2050_NetZero') are placed at the corresponding
+        # step. We pick the row whose scenario matches the configured
+        # 'demand_scenario' (default 'NetZero') for each forward year.
+        scenario = self.config.get('demand_scenario', 'NetZero')
+        knots = [(0, baseline)]
+        if demand_data:
+            for key, val in demand_data.items():
+                if key == str(base_year):
+                    continue
+                # Keys take the form 'YYYY_scenario' for non-baseline rows.
+                if '_' not in key:
+                    continue
+                year_str, _, scen = key.partition('_')
+                try:
+                    year = int(year_str)
+                except ValueError:
+                    continue
+                if scen != scenario:
+                    continue
+                step = (year - base_year) * steps_per_year
+                if step > 0:
+                    knots.append((step, float(val)))
+        knots.sort()
+        self._demand_knots = knots
+
+        if len(knots) > 1:
+            knot_summary = ", ".join(
+                f"step {s} -> {d:,.0f} t/yr" for s, d in knots
+            )
+            print(f"Demand trajectory ({scenario}): {knot_summary}")
+
+    def annual_demand_at(self, step):
+        """Linearly interpolate annual mineral demand at a given step.
+
+        Falls back to the first (last) knot for steps before (after) the
+        knot range. Always returns a finite, positive value as long as
+        the baseline knot is positive.
+        """
+        knots = getattr(self, '_demand_knots', None)
+        if not knots:
+            return self.baseline_mineral_demand_tons_per_year
+        if step <= knots[0][0]:
+            return knots[0][1]
+        for i in range(1, len(knots)):
+            s0, d0 = knots[i - 1]
+            s1, d1 = knots[i]
+            if step <= s1:
+                if s1 == s0:
+                    return d1
+                frac = (step - s0) / (s1 - s0)
+                return d0 + frac * (d1 - d0)
+        return knots[-1][1]
+
+    def demand_growth_factor(self, step=None):
+        """Return demand multiplier vs. the 2024 baseline at a given step."""
+        if step is None:
+            step = self.current_step
+        base = self.baseline_mineral_demand_tons_per_year
+        if base <= 0:
+            return 1.0
+        return self.annual_demand_at(step) / base
 
     def _create_mines(self, mines_data):
         steps_per_year = self.config.get('steps_per_year', 52)
@@ -168,12 +237,16 @@ class MineralSupplyChainModel(Model):
 
         Each recycler claims a fraction of the EOL bucket sized to its
         share of total recycling capacity. Recovery efficiency comes from
-        the per-facility row.
+        the per-facility row. Per-step intake is capped at the
+        facility's nameplate capacity (capacity_yr / steps_per_year)
+        so a small recycler can't absorb an arbitrary share of a huge
+        EOL bucket.
         """
         total_capacity = sum(r['capacity'] for r in recyclers_data) or 1.0
         # Aggregate collection rate across all facilities (config knob;
         # default 30% of available EOL across all recyclers per step).
         agg_collection = self.config.get("collection_rate", 0.30)
+        steps_per_year = self.config.get('steps_per_year', 52)
 
         for r in recyclers_data:
             share = r['capacity'] / total_capacity
@@ -185,6 +258,7 @@ class MineralSupplyChainModel(Model):
                 collection_rate=agg_collection * share,
                 recovery_efficiency=r['recovery_efficiency'],
                 processing_cost=r['processing_cost'],
+                capacity_per_step=r['capacity'] / steps_per_year,
             )
             self.schedule.add(recycler)
             self.recyclers.append(recycler)
@@ -242,6 +316,7 @@ class MineralSupplyChainModel(Model):
         """One retailer per consumer country, sized to that country's demand share."""
         reorder_mult = self.config.get("retailer_reorder_point_multiplier", 2.0)
         order_mult = self.config.get("retailer_order_quantity_multiplier", 3.0)
+        intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
 
         for entry in country_shares:
             country = entry['country']
@@ -254,6 +329,13 @@ class MineralSupplyChainModel(Model):
                 reorder_point=country_demand * reorder_mult,
                 order_quantity=country_demand * order_mult,
             )
+            # Warm-start the embedded mineral content of starting inventory
+            # to the baseline manufacturer intensity. Without this, the
+            # first product-lifetime cycle of EOL deposits is silently
+            # zeroed because the warm-start stock is treated as having no
+            # mineral content -- biasing recycling rates downward for the
+            # first ~10 years of any run.
+            retailer.inventory_mineral = retailer.inventory * intensity
             self.schedule.add(retailer)
             self.retailers.append(retailer)
         print(f"Created {len(self.retailers)} retailers (one per consumer country)")
@@ -536,8 +618,21 @@ class MineralSupplyChainModel(Model):
         if rate <= 0:
             return 0.0
         requested = self._eol_initial_this_step * rate
+        return self.collect_eol_tons(requested)
+
+    def collect_eol_tons(self, tons):
+        """Collect a fixed tonnage from this step's EOL bucket.
+
+        Caller is responsible for sizing the request (typically a fair
+        share of the snapshot, possibly capped at facility capacity).
+        Returns the actual tonnage collected, which may be less than
+        requested if the live bucket has already been drained by other
+        recyclers earlier in the same step.
+        """
+        if tons <= 0:
+            return 0.0
         remaining = self.end_of_life_pool.get(self.current_step, 0.0)
-        actual = min(requested, remaining)
+        actual = min(tons, remaining)
         if actual <= 0:
             return 0.0
         self.end_of_life_pool[self.current_step] = max(0.0, remaining - actual)
@@ -577,9 +672,19 @@ class MineralSupplyChainModel(Model):
                 ),
                 "Total_Domestic_Stockpile": lambda m: sum(a.domestic_stockpile for a in m.mines),
                 "Closed_Chokepoints_Count": lambda m: len(m.closed_chokepoints),
-                "Total_In_Transit": lambda m: sum(
-                    sum(s['quantity'] for s in t.in_transit)
-                    for t in m.transport_agents
+                # Mineral-tonnes in transit. Sums ore/processed/recycled
+                # quantity (already in mineral tonnes) plus the embedded
+                # mineral content of finished-goods shipments. Avoids the
+                # apples-and-oranges mix of summing tons + product units.
+                "Total_In_Transit_Tons": lambda m: sum(
+                    (s['quantity'] if s['material'] in ('ore', 'processed', 'recycled')
+                     else s.get('mineral', 0.0))
+                    for t in m.transport_agents for s in t.in_transit
+                ),
+                # Product-unit shipments in transit (manufacturer -> retailer).
+                "Total_Product_Units_In_Transit": lambda m: sum(
+                    s['quantity'] for t in m.transport_agents
+                    for s in t.in_transit if s['material'] == 'product'
                 ),
             }
         )

@@ -160,6 +160,9 @@ class ProcessorAgent(Agent):
         mineral tons and lands in raw_ore_buffer for processing.
         For already-processed mineral (material_type='processed'), it
         bypasses conversion and goes straight to inventory.
+        For recycled mineral (material_type='recycled'), it routes
+        through receive_recycled so the recycled-supply tracking is
+        preserved.
         """
         if quantity <= 0:
             return
@@ -167,6 +170,8 @@ class ProcessorAgent(Agent):
             self.raw_ore_buffer += quantity
         elif material_type == 'processed':
             self.inventory += quantity
+        elif material_type == 'recycled':
+            self.receive_recycled(quantity)
         else:
             # Unknown material type -- discard rather than corrupt buffers.
             return

@@ -66,6 +66,10 @@ NICKEL_CONFIG = {
     # Consumer behavior
     "consumer_price_sensitivity": -0.7,     # Slightly less elastic than Li
     "consumer_demand_threshold_multiplier": 2.0,
+    # Non-mineral component of the finished-product price ($/unit).
+    # The Ni model treats all consumption as EV-equivalents; base car
+    # price ~$40k pre-battery mineral content.
+    "consumer_product_base_price": 40000,
     
     # Retailer inventory policy
     "retailer_reorder_point_multiplier": 2.0,
@@ -75,6 +79,17 @@ NICKEL_CONFIG = {
     # Manufacturer inventory
     "manufacturer_target_inventory_weeks": 4,
     
+    # Capacity expansion + reserve replacement
+    # Indonesian Ni capacity has been growing ~15%/yr; global Ni more like
+    # 3-4%/yr blended. Use 0.04 as a globally representative CAGR.
+    "mine_capacity_growth_per_year": 0.04,
+    # Ni exploration is mature; modest replacement.
+    "reserve_replacement_rate": 0.50,
+    # Restart lag (open-pit Ni laterite restart is somewhat faster than
+    # underground; HPAL plants take longer). 26 weeks is a fair average.
+    "mine_restart_lag_steps": 26,
+    "demand_scenario": "NetZero",
+
     # Simulation parameters
     "n_steps": 200,
     "random_seed": 42,

@@ -64,8 +64,13 @@ LITHIUM_CONFIG = {
     "max_substitution": 0.30,                # Max 30% reduction
     
     # Consumer behavior
-    "consumer_price_sensitivity": -0.8,      # Demand elasticity
+    "consumer_price_sensitivity": -0.8,      # Demand elasticity (vs product price)
     "consumer_demand_threshold_multiplier": 2.0,  # Max acceptable price multiplier
+    # Non-mineral component of the finished-product price ($/unit).
+    # For Li the product unit is an EV; ~$40k base before battery-mineral
+    # content. Used to apply elasticity to the actual product price
+    # (mineral + base) rather than the bare mineral price.
+    "consumer_product_base_price": 40000,
     
     # Retailer inventory policy
     "retailer_reorder_point_multiplier": 2.0,  # times average demand
@@ -75,6 +80,20 @@ LITHIUM_CONFIG = {
     # Manufacturer inventory
     "manufacturer_target_inventory_weeks": 4,
     
+    # Capacity expansion + reserve replacement
+    # Li mine production grew ~30%/yr 2020-24; assume gradual moderation
+    # to ~7-8%/yr CAGR over 2024-50 (consistent with IEA NetZero ramp).
+    "mine_capacity_growth_per_year": 0.075,
+    # Exploration replaces ~70% of extraction (Li reserves grew over the
+    # past decade despite production growth).
+    "reserve_replacement_rate": 0.70,
+    # Restart lag for a mothballed mine: ~6 months to dewater, rehire,
+    # recommission for hard-rock; less for brine. Use 26 weeks across.
+    "mine_restart_lag_steps": 26,
+    # Demand scenario to interpolate against (matches scenario column in
+    # demand.csv). Use the IEA NetZero rows by default.
+    "demand_scenario": "NetZero",
+
     # Simulation parameters
     "n_steps": 200,
     "random_seed": 42,

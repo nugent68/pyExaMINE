@@ -43,6 +43,13 @@ class MineAgent(Agent):
         #     when price recovers above extraction_cost * restart_margin.
         self.disruption_counter = 0
         self.mothballed = False
+        # Restart lag: real mines can't simply re-open the moment price
+        # crosses the restart threshold. Rehiring, dewatering, equipment
+        # recommissioning take months to a year. While restart_counter
+        # > 0 the mine is actively restarting (no production yet);
+        # extraction resumes once it ticks down to zero. Aborts back to
+        # 0 if price drops below the restart threshold mid-restart.
+        self.restart_counter = 0
 
         # Production tracking. Two views per step:
         #   available_production_this_step: gross output offered to the
@@ -52,11 +59,19 @@ class MineAgent(Agent):
         #   production_this_step: same value initially, but decremented by
         #     processor purchases as the step progresses; used by the
         #     processor-purchase loop to discover what is still for sale.
+        # pithead_stockpile holds extracted-but-unsold mineral. Real mines
+        # stockpile at site when the buyer doesn't take the full lift; the
+        # material isn't lost the way it would be if production_this_step
+        # were simply reset to zero each step. The stockpile is offered
+        # back into production_this_step at the start of the next step.
+        # While the country is embargoed, the pithead does NOT flow out
+        # (the embargo would also bottle up the stockpile).
         self.production_this_step = 0
         self.available_production_this_step = 0
         self.cumulative_production = 0
         self.embargoed_production_this_step = 0
         self.domestic_stockpile = 0
+        self.pithead_stockpile = 0.0
 
     @property
     def operational(self):
@@ -65,14 +80,49 @@ class MineAgent(Agent):
 
     def step(self):
         """Execute one time step of mine behavior."""
+        # 0. Capacity expansion + reserve replacement, applied each step.
+        #    Without these, a 24-year run leaves nameplate capacity stuck
+        #    at 2024 levels even as demand grows ~10x by 2050. Both rates
+        #    are mineral-specific config knobs (see *_config.py); zero
+        #    disables growth. Capacity also requires reserves -- if
+        #    reserves are depleted, expansion is skipped.
+        cfg = self.model.config
+        steps_per_year = cfg.get("steps_per_year", 52)
+        cap_growth_yr = cfg.get("mine_capacity_growth_per_year", 0.0)
+        if cap_growth_yr > 0 and self.reserves > 0:
+            self.production_capacity *= (1.0 + cap_growth_yr / steps_per_year)
+        replacement_rate = cfg.get("reserve_replacement_rate", 0.0)
+        if replacement_rate > 0 and self.cumulative_production > 0:
+            # Constant fraction of *recent* extraction is replaced via
+            # exploration -- approximated as fraction of the current
+            # step's expected capacity output, applied to reserves.
+            self.reserves += self.production_capacity * replacement_rate
+
+        # 1. Carry forward any unsold production from last step into the
+        #    pithead stockpile before resetting per-step counters. This
+        #    keeps mineral mass conserved when processors don't lift the
+        #    full available production (e.g. inventory backpressure).
+        if self.production_this_step > 0:
+            self.pithead_stockpile += self.production_this_step
+
         self.production_this_step = 0
         self.available_production_this_step = 0
         self.embargoed_production_this_step = 0
 
-        # Drain any post-embargo stockpile onto the market each step,
-        # regardless of disruption / mothball status (the material is
-        # already extracted and sitting in a warehouse). Skipped while
-        # the country is still embargoed.
+        # 2. Offer pithead stockpile to the international market unless
+        #    the country is currently embargoed (in which case the
+        #    stockpile waits in place along with new domestic output).
+        if self.pithead_stockpile > 0 and not self.model.is_embargoed(self.jurisdiction):
+            self.production_this_step = self.pithead_stockpile
+            self.available_production_this_step = self.pithead_stockpile
+            self.pithead_stockpile = 0.0
+
+        # 3. Drain any post-embargo stockpile onto the market each step,
+        #    regardless of disruption / mothball status (the material is
+        #    already extracted and sitting in a warehouse). Skipped while
+        #    the country is still embargoed. Whatever isn't bought this
+        #    step rolls into pithead via the carry-forward in step 1 of
+        #    the next step.
         if self.domestic_stockpile > 0 and not self.model.is_embargoed(self.jurisdiction):
             self._release_stockpile()
 
@@ -93,16 +143,32 @@ class MineAgent(Agent):
         # a state separate from disruption so the mine actually reopens
         # when the price recovers (previously it never did, because
         # operational was set False but never restored).
+        #
+        # Restarts incur a multi-step lag (config: mine_restart_lag_steps,
+        # default 26 weeks ~ 6 months) reflecting real-world rehiring
+        # and recommissioning. While restart_counter > 0 the mine has
+        # decided to restart but isn't yet producing. The restart aborts
+        # if price falls back below the threshold during the lag.
         restart_margin = self.model.config.get("mine_restart_margin", 1.2)
+        restart_lag = int(self.model.config.get("mine_restart_lag_steps", 26))
         price = self.model.current_price
         if self.mothballed:
             if price > self.extraction_cost * restart_margin:
-                self.mothballed = False
+                if self.restart_counter <= 0:
+                    self.restart_counter = max(1, restart_lag)
+                self.restart_counter -= 1
+                if self.restart_counter <= 0:
+                    self.mothballed = False
+                else:
+                    return
             else:
+                # Price slipped back below the trigger -- abort restart.
+                self.restart_counter = 0
                 return
         else:
             if price < self.extraction_cost:
                 self.mothballed = True
+                self.restart_counter = 0
                 return
 
         # Produce minerals if reserves remain.

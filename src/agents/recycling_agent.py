@@ -10,7 +10,8 @@ class RecyclingAgent(Agent):
     """Agent representing a recycling facility that recovers minerals."""
 
     def __init__(self, unique_id, model, country, facility,
-                 collection_rate, recovery_efficiency, processing_cost):
+                 collection_rate, recovery_efficiency, processing_cost,
+                 capacity_per_step=None):
         """Initialize a RecyclingAgent.
 
         Args:
@@ -21,6 +22,12 @@ class RecyclingAgent(Agent):
             collection_rate: Fraction of EOL materials this recycler collects (0-1)
             recovery_efficiency: Fraction of collected materials recovered (0-1)
             processing_cost: Cost per ton to process ($/ton)
+            capacity_per_step: Maximum tonnes this facility can take in
+                per step. None means uncapped (legacy behavior). When
+                set, the per-step intake is capped, preventing a tiny
+                facility from absorbing the full share of a huge EOL
+                bucket (which the original CSV capacity column was
+                meant to encode).
         """
         super().__init__(unique_id, model)
 
@@ -33,6 +40,7 @@ class RecyclingAgent(Agent):
         self.collection_rate = collection_rate
         self.recovery_efficiency = recovery_efficiency
         self.processing_cost = processing_cost
+        self.capacity_per_step = capacity_per_step
 
         # Storage (collected mineral tons, pre-recovery-efficiency)
         self.storage = 0
@@ -64,15 +72,42 @@ class RecyclingAgent(Agent):
         amount, regardless of activation order. This avoids the
         compounding shortfall (1 - prod(1 - r_i)) that arose when each
         recycler in turn took a fraction of whatever was left.
+
+        Per-recycler capacity is enforced: a 1,500 t/yr facility cannot
+        absorb its full share of a millions-of-tons EOL bucket. The cap
+        runs in mineral tonnes per step (capacity_per_step). When the
+        cap binds, the un-collected residue is left for other recyclers
+        to pick up the same step (since collect_eol_tons reads from the
+        live bucket, not the snapshot).
         """
-        collected = self.model.collect_eol(self.collection_rate)
+        snapshot = self.model._eol_initial_this_step
+        requested = self.collection_rate * snapshot
+        if self.capacity_per_step is not None:
+            requested = min(requested, self.capacity_per_step)
+        collected = self.model.collect_eol_tons(requested)
         if collected <= 0:
             return
         self.storage += collected
         self.collected_this_step = collected
 
     def _sell_recovered_materials(self):
-        """Process and sell stored material when profitable."""
+        """Process and sell stored material when profitable.
+
+        Recycled mineral is dispatched through the routing engine the
+        same way primary processed mineral is, so a recycler in the USA
+        shipping to a processor in China traverses the route's
+        chokepoints with the route's lead time. Final receipt lands in
+        the processor via receive_shipment(material_type='recycled'),
+        which forwards to receive_recycled so the existing tracking
+        still works.
+
+        Distribution is region-preferenced: same-country processors get
+        first call (split evenly among them), then same-region (via
+        the routing module's COUNTRY_REGION map), then the rest of the
+        world. Within each tier the split is even. This avoids the
+        original even-across-the-globe split sending small amounts of
+        recycled USA mineral to a Tianqi facility every step.
+        """
         if self.storage <= 0:
             return
 
@@ -87,14 +122,46 @@ class RecyclingAgent(Agent):
         if not processors or recovered <= 0:
             return
 
-        # Distribute evenly across processors, routed via the processor's
-        # receive_recycled hook so it gets accounted for separately.
-        amount_per_processor = recovered / len(processors)
-        for processor in processors:
-            processor.receive_recycled(amount_per_processor)
+        targets = self._region_preferenced_targets(processors)
+        if not targets:
+            return
+
+        amount_per_processor = recovered / len(targets)
+        for processor in targets:
+            self.model.dispatch_shipment(
+                material_type='recycled',
+                quantity=amount_per_processor,
+                origin_country=self.country,
+                dest_country=processor.country,
+                destination=processor,
+                mineral_tons=amount_per_processor,
+            )
 
         self.recycled_this_step = recovered
         self.total_recycled += recovered
+
+    def _region_preferenced_targets(self, processors):
+        """Pick the highest-preference tier of processors.
+
+        Returns same-country processors if any exist; else same-region
+        processors; else all processors. Empty list only if the global
+        processor pool is empty (which the caller already guards).
+        """
+        from ..data.routing import COUNTRY_REGION
+
+        local = [p for p in processors if p.country == self.country]
+        if local:
+            return local
+
+        my_region = COUNTRY_REGION.get(self.country, 'Other')
+        regional = [
+            p for p in processors
+            if COUNTRY_REGION.get(p.country, 'Other') == my_region
+        ]
+        if regional:
+            return regional
+
+        return list(processors)
 
     def get_recycled_supply(self):
         """Get the amount recycled this step."""

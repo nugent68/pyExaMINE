@@ -61,10 +61,23 @@ class ManufacturerAgent(Agent):
         self.ordered_this_step = 0
 
     @property
+    def effective_capacity(self):
+        """Production capacity scaled by the model's demand-growth factor.
+
+        Real manufacturer capacity expands as demand grows; without this
+        scaling, a 24-year run that loads a 2024->2050 demand curve would
+        leave manufacturers stuck at 2024 capacity, conflating an
+        un-modeled capacity-investment lag with the mineral supply
+        constraint we actually want to study.
+        """
+        growth = self.model.demand_growth_factor()
+        return self.production_capacity * growth
+
+    @property
     def target_inventory(self):
         """Target input inventory in MINERAL TONS."""
         return (
-            self.production_capacity
+            self.effective_capacity
             * self.target_inventory_weeks
             * self.mineral_intensity
         )
@@ -192,7 +205,7 @@ class ManufacturerAgent(Agent):
             return
 
         max_from_minerals = self.input_inventory / self.mineral_intensity
-        max_production = min(max_from_minerals, self.production_capacity)
+        max_production = min(max_from_minerals, self.effective_capacity)
 
         minerals_consumed = max_production * self.mineral_intensity
         self.produced_this_step = max_production
