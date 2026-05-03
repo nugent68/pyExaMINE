@@ -29,7 +29,7 @@ LITHIUM_CONFIG = {
     # Production parameters
     "avg_ore_grade": 0.85,
     "processor_conversion_efficiency": 0.80,
-    "manufacturer_mineral_intensity": 0.08,  # tons Li per EV
+    "manufacturer_mineral_intensity": 0.008,  # tons Li per EV (~8 kg, 60-80 kWh NMC pack)
     
     # Economic parameters
     "base_extraction_cost": 8000,     # $/ton base cost
@@ -47,7 +47,7 @@ LITHIUM_CONFIG = {
     "collection_rate": 0.30,           # 30% of EOL collected
     "recovery_efficiency": 0.70,       # 70% recovered from collected
     "recycling_processing_cost": 5000, # $/ton
-    "product_lifetime_steps": 25,
+    "product_lifetime_steps": 520,    # ~10 years for EV batteries (8-15y typical)
     
     # Market parameters
     "geopolitical_event_probability": 0.01,  # 1% per step

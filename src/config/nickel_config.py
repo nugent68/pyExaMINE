@@ -47,7 +47,7 @@ NICKEL_CONFIG = {
     "collection_rate": 0.60,           # 60% of EOL collected
     "recovery_efficiency": 0.75,       # 75% recovered from collected
     "recycling_processing_cost": 4500, # $/ton
-    "product_lifetime_steps": 25,
+    "product_lifetime_steps": 520,    # ~10 years (EV battery mix; stainless 20-30y)
     
     # Market parameters
     "geopolitical_event_probability": 0.01,

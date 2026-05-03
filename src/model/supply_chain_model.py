@@ -204,6 +204,11 @@ class MineralSupplyChainModel(Model):
         total_mine_capacity = sum(m.production_capacity for m in self.mines)
         processor_capacity = total_mine_capacity / n_processors * 1.2  # 20% buffer
 
+        # Warm-start factor for initial processed inventory, expressed
+        # as a multiple of safety_stock. Avoids a long empty pipeline
+        # while transport lead times prime the system.
+        warmstart_mult = self.config.get("processor_warmstart_safety_multiplier", 2.0)
+
         for _ in range(n_processors):
             processor = ProcessorAgent(
                 unique_id=self.next_id(),
@@ -212,6 +217,7 @@ class MineralSupplyChainModel(Model):
                 energy_cost=energy_cost,
                 capacity=processor_capacity,
             )
+            processor.inventory = processor.safety_stock * warmstart_mult
             self.schedule.add(processor)
             self.processors.append(processor)
 
@@ -262,6 +268,10 @@ class MineralSupplyChainModel(Model):
             self.baseline_product_demand_per_step * capacity_headroom / n_manufacturers
         )
 
+        # Warm-start input inventory: fraction of target so the
+        # production line isn't idle while transport primes the pipeline.
+        warmstart_frac = self.config.get("manufacturer_warmstart_input_fraction", 0.5)
+
         for _ in range(n_manufacturers):
             manufacturer = ManufacturerAgent(
                 unique_id=self.next_id(),
@@ -269,6 +279,7 @@ class MineralSupplyChainModel(Model):
                 mineral_intensity=mineral_intensity,
                 production_capacity=manufacturer_capacity,
             )
+            manufacturer.input_inventory = manufacturer.target_inventory * warmstart_frac
             self.schedule.add(manufacturer)
             self.manufacturers.append(manufacturer)
 
@@ -470,6 +481,20 @@ class MineralSupplyChainModel(Model):
         """Return True if the named jurisdiction is currently under embargo."""
         return jurisdiction in self.active_embargoes
 
+    def select_transport(self, mode):
+        """Pick a transport agent of the requested mode.
+
+        Returns the next agent of that mode in shuffled order so load
+        is roughly distributed across the fleet within a step. Falls
+        back to any transport agent if no agent matches the requested
+        mode, and returns None if there are no transport agents at all.
+        """
+        if not self.transport_agents:
+            return None
+        candidates = [t for t in self.transport_agents if t.mode == mode]
+        pool = candidates if candidates else list(self.transport_agents)
+        return self.random_state.choice(pool)
+
     def _trigger_geopolitical_event(self):
         """Trigger a geopolitical disruption event."""
         jurisdictions = list({mine.jurisdiction for mine in self.mines})
@@ -537,20 +562,34 @@ class MineralSupplyChainModel(Model):
     # End-of-life pool
     # ------------------------------------------------------------------
 
-    def add_to_eol_pool(self, product_units):
-        """Add sold products to the EOL pool, stored as contained mineral tons."""
+    def add_to_eol_pool(self, product_units, mineral_tons=None):
+        """Add sold products to the EOL pool.
+
+        Stored as contained mineral tons. Callers should pass the
+        as-built mineral_tons that travelled with the goods through
+        manufacturer -> retailer -> consumer; this preserves legacy
+        intensities across substitution events. The product_units arg
+        is kept for legacy callers and as a fallback.
+        """
         if product_units <= 0:
             return
 
-        if self.manufacturers:
-            avg_intensity = (
-                sum(m.mineral_intensity for m in self.manufacturers)
-                / len(self.manufacturers)
-            )
-        else:
-            avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
+        if mineral_tons is None:
+            # Fallback for callers that don't track embedded mineral
+            # content. Uses current avg manufacturer intensity, which is
+            # only correct in the absence of substitution drift.
+            if self.manufacturers:
+                avg_intensity = (
+                    sum(m.mineral_intensity for m in self.manufacturers)
+                    / len(self.manufacturers)
+                )
+            else:
+                avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
+            mineral_tons = product_units * avg_intensity
 
-        mineral_tons = product_units * avg_intensity
+        if mineral_tons <= 0:
+            return
+
         future_step = self.current_step + self.product_lifetime
         self.end_of_life_pool[future_step] = (
             self.end_of_life_pool.get(future_step, 0) + mineral_tons

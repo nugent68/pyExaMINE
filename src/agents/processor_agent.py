@@ -35,6 +35,14 @@ class ProcessorAgent(Agent):
         safety_weeks = self.model.config.get("processor_safety_stock_weeks", 2.0)
         self.safety_stock = capacity * conversion_efficiency * safety_weeks
 
+        # Inventory ceiling: stop purchasing ore once expected post-
+        # processing inventory would exceed this cap. Modeled as weeks
+        # of output capacity. Without this, processors buy and process
+        # indefinitely when downstream demand collapses, masking the
+        # supply/demand price signal and producing unbounded inventory.
+        cap_weeks = self.model.config.get("processor_inventory_cap_weeks", 8.0)
+        self.inventory_cap = capacity * conversion_efficiency * cap_weeks
+
         # Tracking
         self.processed_this_step = 0
         self.purchased_this_step = 0
@@ -57,13 +65,36 @@ class ProcessorAgent(Agent):
         # 3. Sell to manufacturers (manufacturers pull via accept_order)
 
     def _purchase_ore(self):
-        """Purchase ore from available mines, cheapest first."""
+        """Purchase ore from available mines, cheapest first.
+
+        Purchased ore is dispatched to a transport agent (mode='ship'
+        for the long-haul mine -> processor leg) and only lands in
+        raw_ore_buffer when the shipment arrives. This means
+        in_transit_ore + raw_ore_buffer is the relevant "pipeline"
+        quantity for capacity planning, not raw_ore_buffer alone.
+        """
         mines = self.model.mines
         if not mines:
             return
 
         ranked_mines = sorted(mines, key=lambda m: m.extraction_cost)
-        remaining_capacity = self.capacity - self.raw_ore_buffer
+        in_transit = sum(s['quantity'] for s in self._pending_inbound_ore())
+
+        # Throughput cap: don't accept more feedstock than this step's
+        # processing capacity, less what's already on hand or inbound.
+        throughput_room = self.capacity - self.raw_ore_buffer - in_transit
+
+        # Inventory backpressure: how much *more* processed mineral could
+        # we tolerate before hitting the inventory ceiling? Convert that
+        # back into ore-input terms via conversion_efficiency. The
+        # raw_ore_buffer + in_transit have not been processed yet but
+        # will be, so they count against the ceiling at full efficiency.
+        eff = self.conversion_efficiency
+        committed_processed = self.inventory + (self.raw_ore_buffer + in_transit) * eff
+        headroom_processed = max(0.0, self.inventory_cap - committed_processed)
+        backpressure_room = headroom_processed / eff if eff > 0 else 0.0
+
+        remaining_capacity = max(0.0, min(throughput_room, backpressure_room))
 
         for mine in ranked_mines:
             if remaining_capacity <= 0:
@@ -75,9 +106,36 @@ class ProcessorAgent(Agent):
 
             desired = min(remaining_capacity, available)
             actual = mine.sell_production(desired)
-            self.raw_ore_buffer += actual
+            if actual <= 0:
+                continue
+
             self.purchased_this_step += actual
             remaining_capacity -= actual
+
+            transport = self.model.select_transport('ship')
+            if transport is None:
+                # Fallback: no transport fleet -> deliver immediately.
+                self.raw_ore_buffer += actual
+            else:
+                transport.accept_shipment(
+                    material_type='ore',
+                    quantity=actual,
+                    destination=self,
+                    origin_jurisdiction=mine.jurisdiction,
+                    dest_jurisdiction='',
+                    mineral_tons=0.0,
+                )
+
+    def _pending_inbound_ore(self):
+        """Iterate shipments currently in transit destined for this processor.
+
+        Used to keep the processor from over-ordering when capacity is
+        already committed in flight.
+        """
+        for transport in self.model.transport_agents:
+            for shipment in transport.in_transit:
+                if shipment.get('destination') is self and shipment.get('material') == 'ore':
+                    yield shipment
 
     def _process_ore(self):
         """Convert raw ore to processed mineral."""
@@ -90,6 +148,25 @@ class ProcessorAgent(Agent):
         self.raw_ore_buffer -= to_process
         self.inventory += processed
         self.processed_this_step = processed
+
+    def receive_shipment(self, material_type, quantity, mineral_tons=0.0,
+                         origin_jurisdiction=''):
+        """Accept a delivery from a TransportAgent.
+
+        For raw ore (material_type='ore'), the quantity is contained
+        mineral tons and lands in raw_ore_buffer for processing.
+        For already-processed mineral (material_type='processed'), it
+        bypasses conversion and goes straight to inventory.
+        """
+        if quantity <= 0:
+            return
+        if material_type == 'ore':
+            self.raw_ore_buffer += quantity
+        elif material_type == 'processed':
+            self.inventory += quantity
+        else:
+            # Unknown material type -- discard rather than corrupt buffers.
+            return
 
     def receive_recycled(self, amount):
         """Accept recycled material directly into output inventory.

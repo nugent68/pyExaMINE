@@ -85,15 +85,17 @@ class ConsumerAgent(Agent):
         self.model.random_state.shuffle(order)
 
         remaining_demand = self.current_demand
+        mineral_acquired = 0.0
         for retailer in order:
             if remaining_demand <= 0:
                 break
-            purchased = retailer.sell_to_consumer(remaining_demand)
+            purchased, mineral = retailer.sell_to_consumer(remaining_demand)
             self.fulfilled_demand += purchased
             self.total_purchased += purchased
+            mineral_acquired += mineral
             remaining_demand -= purchased
 
         self.unfulfilled_demand = remaining_demand
 
         if self.fulfilled_demand > 0:
-            self.model.add_to_eol_pool(self.fulfilled_demand)
+            self.model.add_to_eol_pool(self.fulfilled_demand, mineral_acquired)

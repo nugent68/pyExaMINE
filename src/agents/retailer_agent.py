@@ -26,6 +26,12 @@ class RetailerAgent(Agent):
 
         # Inventory
         self.inventory = order_quantity  # Start with some inventory
+        # Mineral content embedded in on-hand inventory (tons). Travels
+        # with units so consumers' EOL deposits use as-built intensity.
+        # Initial inventory is "pre-history" stock with no recorded
+        # intensity; treat it as 0 so it neither under- nor over-counts.
+        # It will mostly be flushed within the first few steps anyway.
+        self.inventory_mineral = 0.0
 
         # Order pipeline. Multiple outstanding orders are allowed up to
         # max_pending so the lead-time pipeline doesn't cap throughput
@@ -58,6 +64,7 @@ class RetailerAgent(Agent):
         arrived = [o for o in self.pending_orders if o['arrival_step'] <= current_step]
         for order in arrived:
             self.inventory += order['quantity']
+            self.inventory_mineral += order.get('mineral', 0.0)
             self.pending_orders.remove(order)
 
     def _check_and_reorder(self):
@@ -86,12 +93,13 @@ class RetailerAgent(Agent):
                 continue
 
             desired = min(remaining, available)
-            actual = manufacturer.sell_output(desired)
+            actual, mineral = manufacturer.sell_output(desired)
             if actual <= 0:
                 continue
 
             self.pending_orders.append({
                 'quantity': actual,
+                'mineral': mineral,
                 'arrival_step': self.model.current_step + self.lead_time,
             })
             remaining -= actual
@@ -103,17 +111,21 @@ class RetailerAgent(Agent):
             amount: Amount requested
 
         Returns:
-            Actual amount sold
+            Tuple (units_sold, mineral_tons_embedded). Mineral content
+            is the proportional share of inventory_mineral so as-built
+            intensity travels with the goods all the way to EOL.
         """
         if self.inventory <= 0:
             self.stockouts += 1
-            return 0
+            return 0.0, 0.0
 
         sold = min(amount, self.inventory)
+        mineral_share = self.inventory_mineral * (sold / self.inventory) if self.inventory > 0 else 0.0
         self.inventory -= sold
+        self.inventory_mineral = max(0.0, self.inventory_mineral - mineral_share)
         self.sold_this_step += sold
         self.total_sales += sold
-        return sold
+        return sold, mineral_share
 
     def get_available_inventory(self):
         """Get current available inventory."""
