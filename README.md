@@ -36,9 +36,19 @@ the per-country shipping/rail/truck fleet.
   Ni and Pt files are similarly populated).
 - **Country-level** manufacturer and consumer demand shares (~12
   manufacturer countries, ~25 consumer countries).
+- **GDP-scaled per-country agent fan-out**: each country in the share
+  CSVs is split into `max(1, round(gdp_billion / agents_per_gdp_billion))`
+  manufacturer / retailer / consumer agents (default knob 500, so USA
+  ($28T) gets 56 agents per role, China ($18T) 36, Germany ($4.5T) 9,
+  down to top-30 cutoff at 1; non-top-30 entries — "Other countries",
+  Madagascar, Cuba — stay at 1). The per-country *aggregate* share /
+  demand is unchanged, only the within-country granularity increases.
+  Total downstream agents: ~150 manufacturers, ~180 retailers, ~180
+  consumers per mineral (vs ~12 / 25 / 25 under the previous one-per-
+  country aggregation).
 - Each agent labelled with its country and facility name (e.g.
-  `Australia/Greenbushes`, `China/Tianqi-Sichuan`); labels surface in
-  outputs and plots.
+  `Australia/Greenbushes`, `China/Tianqi-Sichuan`); within-country
+  agents add an index suffix (`USA/retail#7`, `China/manufacturers#22`).
 - Calibrated extraction costs per facility, regional energy costs, and
   recovery / conversion efficiencies per facility.
 
@@ -315,6 +325,7 @@ pyExaMINE/
 │   ├── lithium_consumers.csv          # country-level demand shares
 │   ├── nickel_*, platinum_*           # same structure for Ni and Pt
 │   ├── transport_fleet.csv            # per-country ship/rail/truck fleet
+│   ├── country_gdp.csv                # top-30 nominal GDP (drives agent fan-out)
 │   └── demand.csv                     # global annual demand by year/scenario
 ├── pyproject.toml                     # uv project metadata
 ├── uv.lock                            # Pinned dependency graph (committed)
@@ -718,9 +729,9 @@ ensemble medians + bands, run `--n-seeds 20`.)
 
 | | Avg price | Volatility | Recycling rate | Substitution | Avg mothballed | Fulfillment |
 |---|---:|---:|---:|---:|---:|---:|
-| Lithium  | $14,734 / t        | ±$4,759     |  6.3% |  0%   | 0 / 30  | 89.4% |
-| Nickel   | $11,599 / t        | ±$5,091     |  3.2% |  0%   | 3 / 29  | 86.9% |
-| Platinum | $45,314,960 / t    | ±$2,246,332 |  3.4% | 20%   | 0 / 18  | 62.4% |
+| Lithium  | $14,895 / t        | ±$4,501     |  6.6% |  0%   | 0 / 30  | 91.2% |
+| Nickel   | $11,406 / t        | ±$4,941     |  3.2% |  0%   | 3 / 29  | 90.3% |
+| Platinum | $45,368,970 / t    | ±$2,389,996 |  3.3% | 20%   | 0 / 18  | 63.0% |
 
 Mothballed counts are out of the per-mineral mine total (Li 30, Ni 29,
 Pt 18 facilities). The narrative under NetZero demand:
@@ -788,12 +799,12 @@ embargo duration itself.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Baseline (no embargo)         | $14,850 | — |
-| China only, 1 yr              | $16,324 | +9.9% |
-| Australia only, 1 yr          | $18,273 | +23.1% |
-| Chile only, 1 yr              | $18,400 | +23.9% |
-| **Chile + China, 1 yr**       | **$22,495** | **+51.5%** |
-| **Chile + China + AUS, 5 yr** | **$22,383** | **+50.7%** |
+| Baseline (no embargo)         | $14,570 | — |
+| China only, 1 yr              | $16,223 | +11.3% |
+| Chile only, 1 yr              | $17,791 | +22.1% |
+| Australia only, 1 yr          | $17,963 | +23.3% |
+| **Chile + China, 1 yr**       | **$20,959** | **+43.9%** |
+| **Chile + China + AUS, 5 yr** | **$21,998** | **+51.0%** |
 
 Severity ordering: China alone < Australia ≈ Chile alone <
 Chile+China ≈ big-3 5 yr. The big-3 5-year embargo is comparable to
@@ -833,12 +844,12 @@ plus the lead-time tail) vs the no-crisis baseline at the same window:
 
 | Mineral | Chokepoint closed (8 wk) | In-window avg | Δ vs baseline |
 |---------|--------------------------|---------------:|--------------:|
-| Li      | (baseline, no crisis)    | $13,837        | — |
-| Li      | Suez Canal               | $13,432        | -2.9% |
-| Li      | Malacca Strait           | $13,726        | -0.8% |
-| Li      | Strait of Hormuz         | $13,725        | -0.8% |
-| Ni      | (baseline)               | $8,903         | — |
-| Ni      | Malacca Strait           | $9,372         | +5.3% |
+| Li      | (baseline, no crisis)    | $14,354        | — |
+| Li      | Suez Canal               | $13,735        | -4.3% |
+| Li      | Malacca Strait           | $13,201        | -8.0% |
+| Li      | Strait of Hormuz         | $13,906        | -3.1% |
+| Ni      | (baseline)               | $8,997         | — |
+| Ni      | Malacca Strait           | $9,186         | +2.1% |
 | Pt      | (baseline)               | $46,736,359    | — |
 | Pt      | Suez Canal               | $46,736,359    | +0.0% (ceiling-pinned) |
 
@@ -872,15 +883,15 @@ is the longest event in each scenario. Plots:
 
 | Mineral | Scenario | In-window avg | Δ vs baseline |
 |---------|---------|---------------:|--------------:|
-| Li | asia_crisis_2030       | $24,556        | +23.6% |
-| Li | li_nationalism_2035    | $23,957        | +55.0% |
-| Li | multi_crisis_2040      | $11,111        | -3.9% (Russia/Indo not Li producers) |
-| Ni | asia_crisis_2030       | $18,353        | +6.2% (China is processor, not producer) |
-| Ni | indonesia_squeeze_2032 | $15,644        | +16.2% |
-| Ni | multi_crisis_2040      | $7,499         | +6.8% |
-| Pt | asia_crisis_2030       | $46,726,329    | +0.0% (ceiling-pinned) |
-| Pt | sa_pt_crisis_2030      | $46,726,329    | +0.0% (ceiling-pinned) |
-| Pt | multi_crisis_2040      | $46,655,592    | +0.0% (ceiling-pinned) |
+| Li | asia_crisis_2030       | $24,472        | +18.7% |
+| Li | li_nationalism_2035    | $21,850        | +49.6% |
+| Li | multi_crisis_2040      | $10,974        | -10.0% (Russia/Indo not Li producers) |
+| Ni | asia_crisis_2030       | $17,053        | +3.8% (China is processor, not producer) |
+| Ni | indonesia_squeeze_2032 | $14,848        | +12.1% |
+| Ni | multi_crisis_2040      | $8,097         | +16.9% |
+| Pt | asia_crisis_2030       | $46,570,937    | -0.4% (ceiling-pinned) |
+| Pt | sa_pt_crisis_2030      | $46,735,045    | +0.0% (ceiling-pinned) |
+| Pt | multi_crisis_2040      | $46,736,359    | +0.0% (ceiling-pinned) |
 
 `li_nationalism_2035` (Chile + Australia 2-year embargoes + Suez
 closure) lifts Li price ~55 % — comparable to the canonical big-3
@@ -920,26 +931,36 @@ comparison stats.
 | Collection Rate (aggregate) | 0.30 | 0.60 | 0.75 |
 | Recovery Efficiency (per facility, avg) | 0.93 | 0.91 | 0.91 |
 
-## Agent counts (worldwide model)
+## Agent counts (worldwide model, default `agents_per_gdp_billion = 500`)
 
 | Agent type        | Lithium | Nickel | Platinum |
 |-------------------|--------:|-------:|---------:|
 | MineAgent         |   30    |   29   |   18     |
 | ProcessorAgent    |   25    |   28   |   11     |
 | RecyclingAgent    |   20    |   25   |   15     |
-| ManufacturerAgent |   12    |   15   |   13     |
-| RetailerAgent     |   25    |   25   |   25     |
-| ConsumerAgent     |   25    |   25   |   25     |
+| ManufacturerAgent |  142    |  146   |  152     |
+| RetailerAgent     |  175    |  178   |  178     |
+| ConsumerAgent     |  175    |  178   |  178     |
 | TransportAgent    |   85    |   85   |   85     |
-| **Total**         | **222** | **232** | **192** |
+| **Total**         | **652** | **669** | **637** |
 
 Mines, processors, and recyclers come from the per-facility CSVs in
-`data/`. Manufacturer counts equal the producing-country count from
-`{mineral}_manufacturers.csv`. Retailers and consumers are one per
-country in `{mineral}_consumers.csv` (~25 countries cover ~95% of
-world demand). Transport agents are the same global fleet across all
-minerals, defined in `data/transport_fleet.csv` (per-country ship/
-rail/truck split, ~85 agents over ~26 countries).
+`data/`. Manufacturer / retailer / consumer counts come from
+country-level share CSVs (~12 countries for Li manufacturers, ~25
+for consumers) **fanned out by 2024 GDP** via
+`data/country_gdp.csv`: each (country, share) entry becomes
+`max(1, round(gdp_billion / agents_per_gdp_billion))` agents (USA
+56, China 36, Germany 9, ..., top-30 cutoff 1; Hungary, Vietnam,
+"Other countries" etc. stay at 1 since they're not in the top-30
+table). Per-country aggregate share is unchanged; only the
+within-country granularity increases. Transport agents are the same
+global fleet across all minerals, defined in `data/transport_fleet.csv`
+(per-country ship/rail/truck split, ~85 agents over ~26 countries).
+
+Set `agents_per_gdp_billion` to a larger value (e.g. 2000) to halve
+the agent count for faster smoke runs without changing aggregate
+behaviour, or smaller (e.g. 100) for a much higher resolution
+within-country population.
 
 ### Tunable knobs (with sensible defaults)
 
@@ -968,6 +989,7 @@ rail/truck split, ~85 agents over ~26 countries).
 | `manufacturer_order_rate` | 0.5 | Per-step fraction of the target gap a manufacturer orders. |
 | `manufacturer_capacity_headroom` | 1.5 | Aggregate manufacturer capacity vs. baseline product demand. Capacity also scales with the demand-trajectory growth factor. |
 | `manufacturer_warmstart_input_fraction` | 0.5 | Initial input inventory as a fraction of target. |
+| `agents_per_gdp_billion` | 500.0 | Agent fan-out density: each (country, share) entry in the consumer / manufacturer share CSVs becomes `max(1, round(country_gdp_billion / this))` agents (USA → 56, China → 36, ..., top-30 cutoff → 1). Larger value = fewer agents (faster runs); smaller = more granular within-country populations. Aggregate per-country share / demand is preserved regardless. Countries not in `data/country_gdp.csv` get 1 agent. |
 | `retailer_reorder_point_multiplier` | 4.0 (5.0 Pt) | Reorder point in *weeks of EWMA-tracked realised demand*. Default covers a 3-week ship lead time + 1 week safety stock; Pt uses 5 weeks for the higher transport-security buffer. |
 | `retailer_order_quantity_multiplier` | 3.0 (3.5 Pt) | Order quantity in weeks of EWMA-tracked demand. |
 | `retailer_demand_ewma_alpha` | 0.05 | Smoothing weight for realised consumer requests (~13-week half-life). Tracks both the long-run trend and consumer price-elasticity contraction during multi-month spikes; a higher alpha makes the policy more reactive (and noisier). |
