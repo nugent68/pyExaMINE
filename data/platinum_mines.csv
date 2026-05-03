@@ -1,0 +1,22 @@
+# Curated estimate of major platinum mining operations (2024 baseline).
+# Production[t/yr] is contained Pt metal. Reserves[t] also as Pt metal.
+# South Africa dominates (Bushveld Complex). Russia from PGM byproduct of Ni.
+country,facility,production_2024[t/yr],reserves[t],extraction_cost
+South Africa,Mogalakwena,40,8000,12000000
+South Africa,Marikana (Sibanye),28,5500,15000000
+South Africa,Rustenburg (Sibanye),22,4500,15500000
+South Africa,Amandelbult,18,3500,15500000
+South Africa,Mototolo,8,2500,16000000
+South Africa,Two Rivers,7,2000,16000000
+South Africa,Modikwa,4,1500,16500000
+South Africa,Bafokeng-Rasimone,3,500,17000000
+Russia,Norilsk-Talnakh,16,2800,16500000
+Russia,Norilsk-Oktyabrsky,5,1100,16500000
+Zimbabwe,Mimosa,8,500,10500000
+Zimbabwe,Unki,6,400,10500000
+Zimbabwe,Ngezi,3,300,11000000
+Canada,Lac des Iles,4,200,18000000
+Canada,Sudbury PGM byproduct,2,110,17500000
+USA,Stillwater MT,2,600,21000000
+USA,East Boulder MT,1,300,21000000
+Other countries,Other Pt operations,3,300,15000000

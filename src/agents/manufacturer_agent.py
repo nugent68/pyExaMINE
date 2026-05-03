@@ -9,16 +9,24 @@ from mesa import Agent
 class ManufacturerAgent(Agent):
     """Agent representing a manufacturer that uses minerals to produce goods."""
 
-    def __init__(self, unique_id, model, mineral_intensity, production_capacity):
+    def __init__(self, unique_id, model, country, mineral_intensity,
+                 production_capacity):
         """Initialize a ManufacturerAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
+            country: Host country (used by routing engine when ordering
+                inputs from processors)
             mineral_intensity: Tons of mineral per unit of product
             production_capacity: Maximum production (units/step)
         """
         super().__init__(unique_id, model)
+
+        # Identity
+        self.country = country
+        self.facility = f"{country} aggregate"
+        self.label = f"{country}/manufacturers"
 
         # Core attributes
         self.initial_mineral_intensity = mineral_intensity
@@ -28,6 +36,11 @@ class ManufacturerAgent(Agent):
         # Inventory
         self.input_inventory = 0   # Tons of processed mineral
         self.output_inventory = 0  # Units of finished product
+        # Mineral content embedded in output_inventory (tons). Tracked
+        # alongside units so EOL pool deposits use the *as-built*
+        # intensity of each batch rather than re-reading current
+        # mineral_intensity (which drifts down with substitution).
+        self.output_inventory_mineral = 0.0
 
         # Target input inventory in MINERAL TONS (= production_capacity in
         # product-units * mineral_intensity tons/unit * weeks of buffer).
@@ -113,8 +126,15 @@ class ManufacturerAgent(Agent):
 
         target_inventory and input_inventory are both in mineral tonnes.
         Order up to a fraction of the gap each step to smooth flow.
+        Ordered material is dispatched via a TransportAgent (mode='rail'
+        for the processor -> manufacturer leg) and only lands in
+        input_inventory when the shipment arrives, so on-order quantities
+        are tracked against the gap to avoid over-ordering during the
+        transit window.
         """
-        minerals_needed = max(0, self.target_inventory - self.input_inventory)
+        in_transit = sum(s['quantity'] for s in self._pending_inbound_processed())
+        effective_inventory = self.input_inventory + in_transit
+        minerals_needed = max(0, self.target_inventory - effective_inventory)
         if minerals_needed <= 0:
             return
 
@@ -131,10 +151,40 @@ class ManufacturerAgent(Agent):
 
             desired = min(order_amount, available)
             actual = processor.accept_order(desired)
+            if actual <= 0:
+                continue
 
-            self.input_inventory += actual
             self.ordered_this_step += actual
             order_amount -= actual
+
+            self.model.dispatch_shipment(
+                material_type='processed',
+                quantity=actual,
+                origin_country=processor.country,
+                dest_country=self.country,
+                destination=self,
+                mineral_tons=actual,
+            )
+
+    def _pending_inbound_processed(self):
+        """Iterate shipments of processed mineral currently destined here."""
+        for transport in self.model.transport_agents:
+            for shipment in transport.in_transit:
+                if shipment.get('destination') is self and shipment.get('material') == 'processed':
+                    yield shipment
+
+    def receive_shipment(self, material_type, quantity, mineral_tons=0.0,
+                         origin_jurisdiction=''):
+        """Accept a delivery from a TransportAgent.
+
+        For 'processed' mineral, quantity is mineral tons and lands in
+        input_inventory. Other material types are silently dropped to
+        avoid corrupting buffers.
+        """
+        if quantity <= 0:
+            return
+        if material_type == 'processed':
+            self.input_inventory += quantity
 
     def _produce_goods(self):
         """Produce finished goods from mineral inputs."""
@@ -144,10 +194,10 @@ class ManufacturerAgent(Agent):
         max_from_minerals = self.input_inventory / self.mineral_intensity
         max_production = min(max_from_minerals, self.production_capacity)
 
+        minerals_consumed = max_production * self.mineral_intensity
         self.produced_this_step = max_production
         self.output_inventory += max_production
-
-        minerals_consumed = max_production * self.mineral_intensity
+        self.output_inventory_mineral += minerals_consumed
         self.input_inventory -= minerals_consumed
 
     def get_available_output(self):
@@ -161,8 +211,16 @@ class ManufacturerAgent(Agent):
             amount: Amount requested (units)
 
         Returns:
-            Actual amount sold
+            Tuple (units_sold, mineral_tons_embedded). The mineral
+            content is the proportional share of output_inventory_mineral
+            for the sold units, so the as-built intensity travels with
+            the goods.
         """
         sold = min(amount, self.output_inventory)
+        if sold <= 0 or self.output_inventory <= 0:
+            return 0.0, 0.0
+
+        mineral_share = self.output_inventory_mineral * (sold / self.output_inventory)
         self.output_inventory -= sold
-        return sold
+        self.output_inventory_mineral = max(0.0, self.output_inventory_mineral - mineral_share)
+        return sold, mineral_share

@@ -85,7 +85,23 @@ def parse_arguments():
             'Schedule a political embargo. Format COUNTRY:START_STEP:DURATION '
             '(e.g., "Chile:624:52" -> Chile withholds exports starting step '
             '624 for 52 steps). May be repeated for multiple embargoes. '
-            'Country must match the jurisdiction string in USGS_CMM.csv.'
+            'Country must match the country column in data/{mineral}_mines.csv.'
+        ),
+    )
+
+    parser.add_argument(
+        '--chokepoint-crisis',
+        action='append',
+        default=None,
+        metavar='NAME:START_STEP:DURATION',
+        help=(
+            'Schedule a chokepoint closure. Format NAME:START_STEP:DURATION '
+            '(e.g., "Suez Canal:624:8" -> Suez Canal closed for 8 weeks '
+            'starting step 624). Any in-transit shipment whose route uses '
+            'the named chokepoint is delayed until it reopens, and new '
+            'shipments are dispatched onto an alternate route if one '
+            'exists. Known chokepoints: Strait of Hormuz, Suez Canal, '
+            'Malacca Strait, Panama Canal, Cape of Good Hope.'
         ),
     )
 
@@ -126,7 +142,7 @@ def _parse_embargo_specs(specs):
         return []
     parsed = []
     for spec in specs:
-        parts = spec.rsplit(':', 2)  # rsplit so country names with ':' would still parse
+        parts = spec.rsplit(':', 2)
         if len(parts) != 3:
             raise ValueError(
                 f"Invalid --embargo value '{spec}'. "
@@ -151,9 +167,43 @@ def _parse_embargo_specs(specs):
     return parsed
 
 
+def _parse_chokepoint_specs(specs):
+    """Parse a list of "NAME:START_STEP:DURATION" strings.
+
+    Returns dicts in the schema expected by MineralSupplyChainModel
+    (config['chokepoint_crises']).
+    """
+    if not specs:
+        return []
+    parsed = []
+    for spec in specs:
+        parts = spec.rsplit(':', 2)
+        if len(parts) != 3:
+            raise ValueError(
+                f"Invalid --chokepoint-crisis value '{spec}'. "
+                f"Expected NAME:START_STEP:DURATION (e.g., 'Suez Canal:624:8')."
+            )
+        name, start_step, duration = parts
+        try:
+            start_step = int(start_step)
+            duration = int(duration)
+        except ValueError as e:
+            raise ValueError(f"Invalid --chokepoint-crisis value '{spec}': {e}")
+        if duration <= 0 or start_step < 0:
+            raise ValueError(
+                f"Invalid --chokepoint-crisis value '{spec}': start_step >=0, duration >0."
+            )
+        parsed.append({
+            'chokepoint': name.strip(),
+            'start_step': start_step,
+            'duration': duration,
+        })
+    return parsed
+
+
 def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
                        output_dir='outputs', generate_viz=True,
-                       embargoes=None):
+                       embargoes=None, chokepoint_crises=None):
     """Run simulation for a single mineral.
 
     Args:
@@ -164,6 +214,7 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
         output_dir: Output directory
         generate_viz: Whether to generate visualizations
         embargoes: Optional list of political-embargo dicts to add to config
+        chokepoint_crises: Optional list of chokepoint-crisis dicts to add
 
     Returns:
         Model instance
@@ -172,12 +223,10 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
     print(f"RUNNING {mineral_name.upper()} SIMULATION")
     print(f"{'='*70}")
 
-    # Get configuration
     config = get_config(mineral_name)
     if config is None:
         raise ValueError(f"Unknown mineral: {mineral_name}")
 
-    # Override config parameters if specified
     config = config.copy()
     if n_steps is not None:
         config['n_steps'] = n_steps
@@ -186,8 +235,9 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
     if seed is not None:
         config['random_seed'] = seed
     if embargoes:
-        # Append to (rather than replace) any embargoes already in the config.
         config['political_embargoes'] = list(config.get('political_embargoes', [])) + list(embargoes)
+    if chokepoint_crises:
+        config['chokepoint_crises'] = list(config.get('chokepoint_crises', [])) + list(chokepoint_crises)
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -228,7 +278,7 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
 
 def run_all_minerals(n_steps=None, geo_prob=None, seed=None,
                      output_dir='outputs', generate_viz=True,
-                     embargoes=None):
+                     embargoes=None, chokepoint_crises=None):
     """Run simulations for all three minerals.
 
     Args:
@@ -255,6 +305,7 @@ def run_all_minerals(n_steps=None, geo_prob=None, seed=None,
         models[mineral] = run_single_mineral(
             mineral, n_steps, geo_prob, seed, output_dir, generate_viz,
             embargoes=embargoes,
+            chokepoint_crises=chokepoint_crises,
         )
     
     print(f"\n{'='*70}")
@@ -281,12 +332,14 @@ def main():
     print(f"  Generate visualizations: {not args.no_viz}")
     
     embargoes = _parse_embargo_specs(args.embargo)
+    chokepoint_crises = _parse_chokepoint_specs(args.chokepoint_crisis)
     if embargoes:
         print(f"  Embargoes: {embargoes}")
+    if chokepoint_crises:
+        print(f"  Chokepoint crises: {chokepoint_crises}")
 
     try:
         if args.all:
-            # Run all minerals
             run_all_minerals(
                 n_steps=args.steps,
                 geo_prob=args.geo_prob,
@@ -294,9 +347,9 @@ def main():
                 output_dir=args.output_dir,
                 generate_viz=not args.no_viz,
                 embargoes=embargoes,
+                chokepoint_crises=chokepoint_crises,
             )
         else:
-            # Run single mineral
             run_single_mineral(
                 mineral_name=args.mineral,
                 n_steps=args.steps,
@@ -305,6 +358,7 @@ def main():
                 output_dir=args.output_dir,
                 generate_viz=not args.no_viz,
                 embargoes=embargoes,
+                chokepoint_crises=chokepoint_crises,
             )
         
         print("\n✓ Simulation successful!")

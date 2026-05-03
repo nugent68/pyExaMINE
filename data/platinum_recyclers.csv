@@ -1,0 +1,18 @@
+# Curated estimate of major platinum / autocatalyst recyclers.
+# Capacity[t/yr] is contained Pt recoverable.
+country,facility,capacity_2024[t/yr],recovery_efficiency,processing_cost
+Belgium,Umicore Hoboken,30,0.92,7000000
+Germany,Heraeus Hanau,18,0.92,7000000
+Germany,BASF Ludwigshafen,15,0.90,7200000
+USA,Johnson Matthey Brimsdown,12,0.90,7500000
+USA,Hensel Recycling NC,8,0.88,7800000
+USA,A-1 Specialized PGM TX,6,0.85,8000000
+UK,Johnson Matthey Royston,12,0.92,7500000
+Japan,Tanaka Kikinzoku Kosaka,15,0.93,7500000
+Japan,Furuya Metal,8,0.93,7500000
+Japan,Asahi Pretec,10,0.92,7600000
+Korea,SungEel HiTech Gunsan,5,0.88,7800000
+Korea,Heraeus Korea,4,0.90,7800000
+China,Sino-Platinum,12,0.85,6500000
+China,Hengbang PGM,8,0.85,6500000
+South Africa,Sibanye Recycling,4,0.88,6500000

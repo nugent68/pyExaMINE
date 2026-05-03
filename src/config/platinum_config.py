@@ -28,7 +28,7 @@ PLATINUM_CONFIG = {
     # Production parameters (precious metal characteristics)
     "avg_ore_grade": 0.55,     # Very low grade ore
     "processor_conversion_efficiency": 0.70,
-    "manufacturer_mineral_intensity": 0.00005,  # grams per catalyst (very small)
+    "manufacturer_mineral_intensity": 0.000003,  # ~3 g Pt per autocatalyst (1-7 g PGM typical)
     
     # Economic parameters (high costs for precious metals)
     "base_extraction_cost": 15000000,  # $/ton base cost
@@ -46,7 +46,7 @@ PLATINUM_CONFIG = {
     "collection_rate": 0.75,            # 75% of EOL collected
     "recovery_efficiency": 0.85,        # 85% recovered from collected
     "recycling_processing_cost": 8000000,  # $/ton
-    "product_lifetime_steps": 25,
+    "product_lifetime_steps": 624,    # ~12 years for autocatalysts (10-15y typical)
     
     # Market parameters
     "geopolitical_event_probability": 0.01,

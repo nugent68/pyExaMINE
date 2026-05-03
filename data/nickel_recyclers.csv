@@ -1,0 +1,28 @@
+# Curated estimate of major nickel recyclers (stainless scrap + battery scrap).
+# Capacity[t/yr] is contained Ni metal recoverable.
+country,facility,capacity_2024[t/yr],recovery_efficiency,processing_cost
+USA,Steel Dynamics OH,40000,0.92,3800
+USA,Nucor SC,35000,0.92,3800
+USA,Redwood Materials NV,15000,0.90,4200
+USA,Li-Cycle Rochester NY,8000,0.85,4200
+Germany,Aurubis Hamburg,30000,0.93,4000
+Germany,BASF Schwarzheide,15000,0.90,4000
+Germany,Befesa,12000,0.90,4000
+Belgium,Umicore Hoboken,25000,0.95,4000
+Sweden,Boliden Skelleftea,15000,0.92,4100
+Norway,Glencore Nikkelverk Recycling,12000,0.93,4200
+Finland,Nornickel Harjavalta,18000,0.92,4100
+Italy,Acerinox Cádiz,30000,0.90,4200
+China,GEM Jingmen,40000,0.90,3500
+China,BRUNP Foshan,35000,0.90,3500
+China,Huayou Cobalt,30000,0.90,3500
+China,Bangpu,20000,0.90,3500
+China,Ganzhou Bangpu,15000,0.90,3500
+Korea,POSCO Recycling,20000,0.92,3800
+Korea,SungEel HiTech Gunsan,12000,0.92,3800
+Japan,Sumitomo Recycling,18000,0.93,3900
+Japan,Mitsui Mining,12000,0.93,3900
+Canada,Glencore Recycling,15000,0.93,4000
+UK,EMR Birmingham,10000,0.90,4100
+India,Jindal Stainless,18000,0.88,3700
+Brazil,Aperam Timoteo,8000,0.90,3800

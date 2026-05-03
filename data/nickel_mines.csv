@@ -1,0 +1,33 @@
+# Curated estimate of major nickel mining operations (2024 baseline).
+# Production[t/yr] is contained Ni metal. Reserves[t] also as Ni metal.
+country,facility,production_2024[t/yr],reserves[t],extraction_cost
+Indonesia,Sulawesi-Morowali,800000,18000000,7200
+Indonesia,Halmahera-Weda Bay,650000,15000000,7200
+Indonesia,Sulawesi-Pomalaa,400000,9000000,7300
+Indonesia,Maluku-Obi,350000,8000000,7300
+Indonesia,Sulawesi-Konawe,200000,5000000,7400
+Philippines,Surigao-Caraga,180000,2500000,7600
+Philippines,Palawan-Rio Tuba,90000,1200000,7700
+Philippines,Tawi-Tawi,60000,1100000,7800
+Russia,Norilsk-Talnakh,150000,4500000,9900
+Russia,Kola-Pechenga,40000,1500000,9900
+Russia,Norilsk-Oktyabrsky,10000,500000,9900
+New Caledonia,Goro (Prony),120000,4000000,8100
+New Caledonia,Doniambo,80000,2200000,8100
+New Caledonia,Tiebaghi,30000,900000,8100
+Australia,Murrin Murrin,50000,8000000,11700
+Australia,Ravensthorpe,40000,7500000,11700
+Australia,Mt Keith,40000,5000000,11700
+Australia,Kambalda,30000,3500000,11700
+Canada,Sudbury (Vale),100000,1100000,10800
+Canada,Voisey's Bay,60000,500000,10800
+Canada,Raglan,30000,400000,10800
+China,Jinchuan,80000,3500000,7200
+China,Sichuan-Panxi,30000,700000,7200
+Brazil,Onça Puma,90000,12000000,8550
+Brazil,Niquelandia,30000,4000000,8550
+Cuba,Moa,40000,4500000,6300
+Cuba,Punta Gorda,9000,1000000,6300
+USA,Eagle Mine MI,18000,340000,12600
+Madagascar,Ambatovy,33000,1600000,8500
+Other countries,Other Ni operations,100000,3000000,9000

@@ -9,17 +9,25 @@ from mesa import Agent
 class RecyclingAgent(Agent):
     """Agent representing a recycling facility that recovers minerals."""
 
-    def __init__(self, unique_id, model, collection_rate, recovery_efficiency, processing_cost):
+    def __init__(self, unique_id, model, country, facility,
+                 collection_rate, recovery_efficiency, processing_cost):
         """Initialize a RecyclingAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
+            country: Host country
+            facility: Facility name (e.g. 'Redwood Materials NV')
             collection_rate: Fraction of EOL materials this recycler collects (0-1)
             recovery_efficiency: Fraction of collected materials recovered (0-1)
             processing_cost: Cost per ton to process ($/ton)
         """
         super().__init__(unique_id, model)
+
+        # Identity
+        self.country = country
+        self.facility = facility
+        self.label = f"{country}/{facility}"
 
         # Core attributes
         self.collection_rate = collection_rate

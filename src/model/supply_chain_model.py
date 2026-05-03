@@ -1,9 +1,13 @@
 """
-Main supply chain model integrating all agents.
-Uses Mesa 2.x with a custom tier-ordered scheduler so the supply chain
-flows correctly within a single step (mines -> recyclers -> processors ->
-manufacturers -> retailers -> consumers, transport last as cosmetic).
-Within each tier, agents are shuffled for fairness.
+Worldwide critical-minerals supply-chain model.
+
+Per-facility mines, processors, recyclers; per-country manufacturers,
+retailers, consumers; per-country transport fleets routed through real
+maritime/overland routes with chokepoint-aware delivery delays.
+
+Tier-ordered scheduler: mines -> recyclers -> processors -> manufacturers
+-> retailers -> consumers -> transport (last so shipments accepted
+earlier in the same step queue with the full lead time).
 """
 
 from mesa import Model
@@ -12,7 +16,6 @@ from mesa.datacollection import DataCollector
 import numpy as np
 import random
 
-# Import agents
 from ..agents.mine_agent import MineAgent
 from ..agents.processor_agent import ProcessorAgent
 from ..agents.transport_agent import TransportAgent
@@ -21,8 +24,8 @@ from ..agents.retailer_agent import RetailerAgent
 from ..agents.consumer_agent import ConsumerAgent
 from ..agents.recycling_agent import RecyclingAgent
 
-# Import utilities
 from ..data.data_loader import load_mineral_data
+from ..data.routing import CHOKEPOINTS, select_route_or_fallback
 from .market_mechanism import (
     update_price, check_geopolitical_event,
     select_affected_jurisdiction, calculate_disruption_duration
@@ -30,24 +33,15 @@ from .market_mechanism import (
 
 
 class MineralSupplyChainModel(Model):
-    """Agent-based model of critical minerals supply chain."""
+    """Agent-based model of a worldwide critical-minerals supply chain."""
 
-    def __init__(self, config, csv_path="USGS_CMM.csv"):
-        """Initialize the supply chain model.
-
-        Args:
-            config: Configuration dictionary
-            csv_path: Path to USGS data file
-        """
+    def __init__(self, config):
+        """Initialize the supply chain model from a per-mineral config."""
         super().__init__()
 
         self.config = config
         self.mineral_type = config["mineral_type"]
 
-        # Initialize random seed. We do seed both the global random and
-        # numpy generators because some libraries we don't directly
-        # control use them, but everything in this model goes through
-        # self.random_state for reproducibility.
         seed = config.get("random_seed", 42)
         random.seed(seed)
         np.random.seed(seed)
@@ -59,31 +53,32 @@ class MineralSupplyChainModel(Model):
         self.price_floor = config["price_floor"]
         self.price_ceiling = config["price_ceiling"]
 
-        # End-of-life pool for recycling (dictionary: step -> mineral tons)
+        # End-of-life pool for recycling (dict: step -> mineral tons)
         self.end_of_life_pool = {}
         self.product_lifetime = config.get("product_lifetime_steps", 25)
-
-        # Snapshot of this step's EOL bucket size, set at the top of step()
-        # so all recyclers can take a fair share of the same starting pot.
         self._eol_initial_this_step = 0.0
 
         # Geopolitical event tracking
         self.active_disruptions = {}  # jurisdiction -> remaining_steps
 
-        # Political-embargo tracking (separate from random geopolitical
-        # disruptions): a country can withhold its mine output from the
-        # international market for a fixed duration. Mines in the country
-        # continue to extract; output goes to a domestic stockpile.
+        # Political-embargo tracking
         self.scheduled_embargoes = list(config.get("political_embargoes", []))
-        self.active_embargoes = {}  # jurisdiction -> remaining_steps
+        self.active_embargoes = {}    # jurisdiction -> remaining_steps
 
-        # Rolling history of mineral supply/demand flows (tons/step), used
-        # by the price-update signal. Indexed by step.
+        # Chokepoint crisis tracking
+        self.scheduled_chokepoint_crises = list(
+            config.get("chokepoint_crises", [])
+        )
+        # closed_chokepoints maps name -> end_step (exclusive). Looked up
+        # by transport agents when deciding whether to defer delivery,
+        # and by the routing engine when picking a route at dispatch time.
+        self.closed_chokepoints = {}
+
+        # Rolling supply/demand history for the price signal
         self.supply_flow_history: list = []
         self.demand_flow_history: list = []
 
-        # Agent lists for easy access. The supply-chain step order is
-        # determined by the order self.tiers iterates these lists.
+        # Agent lists per tier
         self.mines = []
         self.recyclers = []
         self.processors = []
@@ -92,22 +87,18 @@ class MineralSupplyChainModel(Model):
         self.consumers = []
         self.transport_agents = []
 
-        # Mesa scheduler kept around so DataCollector and any external
-        # tooling that pokes at it still works; we drive activation
-        # ourselves from self.tiers.
         self.schedule = BaseScheduler(self)
-
         self.current_step = 0
 
-        # Load data and create agents
-        self._load_data_and_create_agents(csv_path)
-
-        # Setup data collector
+        self._load_data_and_create_agents()
         self._setup_data_collector()
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
 
     @property
     def tiers(self):
-        """Ordered tiers of agents for the per-step supply chain pass."""
         return [
             self.mines,
             self.recyclers,
@@ -118,285 +109,269 @@ class MineralSupplyChainModel(Model):
             self.transport_agents,
         ]
 
-    def _load_data_and_create_agents(self, csv_path):
-        """Load USGS data and create all agents."""
-        mines_data, demand_data = load_mineral_data(self.mineral_type, csv_path)
+    def _load_data_and_create_agents(self):
+        """Load all CSVs and build the agent population."""
+        data = load_mineral_data(self.mineral_type)
+        self._resolve_baseline_demand(data['demand'])
 
-        self._resolve_baseline_demand(demand_data)
-
-        # Creation order matches the tier order.
-        self._create_mines(mines_data)
-        self._create_recyclers()
-        self._create_processors()
-        self._create_manufacturers()
-        self._create_retailers()
-        self._create_consumers()
-        self._create_transport()
+        # Creation order matches the tier order; transport last because
+        # downstream agents reference no transport-specific state at init.
+        self._create_mines(data['mines'])
+        self._create_recyclers(data['recyclers'])
+        self._create_processors(data['processors'])
+        self._create_manufacturers(data['manufacturer_countries'])
+        self._create_retailers(data['consumer_countries'])
+        self._create_consumers(data['consumer_countries'])
+        self._create_transport(data['transport_fleet'])
 
     def _resolve_baseline_demand(self, demand_data):
-        """Resolve baseline annual mineral demand (tonnes/year).
-
-        Values arrive already normalized to tonnes/year by the data loader
-        (which strips the [unit] suffix and applies the conversion factor).
-        If the mineral has no demand column in the CSV, fall back to
-        config['default_annual_demand_tons']. We require an exact key
-        match on '2024' so a future scenario column like '2024_NetZero'
-        cannot accidentally hijack the baseline.
-        """
-        baseline_demand_tons_per_year = 0.0
+        """Set baseline_mineral_demand_per_step from data + config fallback."""
+        baseline = 0.0
         if demand_data and '2024' in demand_data and demand_data['2024'] > 0:
-            baseline_demand_tons_per_year = float(demand_data['2024'])
-            print(
-                f"Using 2024 demand from CSV: {baseline_demand_tons_per_year:,.0f} tons/year"
-            )
-
-        if baseline_demand_tons_per_year <= 0:
-            baseline_demand_tons_per_year = self.config.get(
-                'default_annual_demand_tons', 100000.0
-            )
-            print(
-                f"No 2024 demand column found; using config default: "
-                f"{baseline_demand_tons_per_year:,.0f} tons/year"
-            )
+            baseline = float(demand_data['2024'])
+            print(f"Using 2024 demand: {baseline:,.0f} tons/year")
+        if baseline <= 0:
+            baseline = float(self.config.get('default_annual_demand_tons', 100000.0))
+            print(f"No 2024 demand row; using config default: {baseline:,.0f} tons/year")
 
         steps_per_year = self.config.get('steps_per_year', 52)
-        mineral_intensity = self.config.get('manufacturer_mineral_intensity', 0.08)
+        intensity = self.config.get('manufacturer_mineral_intensity', 0.008)
 
-        self.baseline_mineral_demand_tons_per_year = baseline_demand_tons_per_year
-        self.baseline_mineral_demand_per_step = (
-            baseline_demand_tons_per_year / steps_per_year
-        )
-        self.baseline_product_demand_per_step = (
-            self.baseline_mineral_demand_per_step / mineral_intensity
-        )
+        self.baseline_mineral_demand_tons_per_year = baseline
+        self.baseline_mineral_demand_per_step = baseline / steps_per_year
+        self.baseline_product_demand_per_step = self.baseline_mineral_demand_per_step / intensity
 
         print(
-            f"Mineral demand: {self.baseline_mineral_demand_per_step:,.2f} tons/step "
+            f"Mineral demand: {self.baseline_mineral_demand_per_step:,.2f} t/step "
             f"-> Product demand: {self.baseline_product_demand_per_step:,.2f} units/step"
         )
 
     def _create_mines(self, mines_data):
-        """Create mine agents from USGS data."""
         steps_per_year = self.config.get('steps_per_year', 52)
-
-        for mine_params in mines_data:
+        for m in mines_data:
             mine = MineAgent(
                 unique_id=self.next_id(),
                 model=self,
-                jurisdiction=mine_params['jurisdiction'],
-                ore_grade=mine_params['ore_grade'],
-                production_capacity=mine_params['production_capacity'] / steps_per_year,
-                extraction_cost=mine_params['extraction_cost'],
-                reserves=mine_params['reserves'],
+                jurisdiction=m['country'],
+                facility=m['facility'],
+                production_capacity=m['production_capacity'] / steps_per_year,
+                extraction_cost=m['extraction_cost'],
+                reserves=m['reserves'],
             )
             self.schedule.add(mine)
             self.mines.append(mine)
+        print(f"Created {len(self.mines)} mines across "
+              f"{len({a.country for a in self.mines})} countries")
 
-        print(f"Created {len(self.mines)} mines")
+    def _create_recyclers(self, recyclers_data):
+        """Create per-facility recyclers.
 
-    def _create_processors(self):
-        """Create processor agents."""
-        n_processors = self.config.get("n_processors", 5)
-        conversion_eff = self.config.get("processor_conversion_efficiency", 0.80)
-        energy_cost = self.config.get("processor_energy_cost", 1500)
+        Each recycler claims a fraction of the EOL bucket sized to its
+        share of total recycling capacity. Recovery efficiency comes from
+        the per-facility row.
+        """
+        total_capacity = sum(r['capacity'] for r in recyclers_data) or 1.0
+        # Aggregate collection rate across all facilities (config knob;
+        # default 30% of available EOL across all recyclers per step).
+        agg_collection = self.config.get("collection_rate", 0.30)
 
-        # Estimate capacity based on total mine production
-        total_mine_capacity = sum(m.production_capacity for m in self.mines)
-        processor_capacity = total_mine_capacity / n_processors * 1.2  # 20% buffer
+        for r in recyclers_data:
+            share = r['capacity'] / total_capacity
+            recycler = RecyclingAgent(
+                unique_id=self.next_id(),
+                model=self,
+                country=r['country'],
+                facility=r['facility'],
+                collection_rate=agg_collection * share,
+                recovery_efficiency=r['recovery_efficiency'],
+                processing_cost=r['processing_cost'],
+            )
+            self.schedule.add(recycler)
+            self.recyclers.append(recycler)
+        print(f"Created {len(self.recyclers)} recyclers across "
+              f"{len({a.country for a in self.recyclers})} countries")
 
-        for _ in range(n_processors):
+    def _create_processors(self, processors_data):
+        """Create per-facility processors. Capacity from data, in t/year."""
+        steps_per_year = self.config.get('steps_per_year', 52)
+        warmstart_mult = self.config.get("processor_warmstart_safety_multiplier", 2.0)
+
+        for p in processors_data:
             processor = ProcessorAgent(
                 unique_id=self.next_id(),
                 model=self,
-                conversion_efficiency=conversion_eff,
-                energy_cost=energy_cost,
-                capacity=processor_capacity,
+                country=p['country'],
+                facility=p['facility'],
+                conversion_efficiency=p['conversion_efficiency'],
+                energy_cost=p['energy_cost'],
+                capacity=p['capacity'] / steps_per_year,
             )
+            processor.inventory = processor.safety_stock * warmstart_mult
             self.schedule.add(processor)
             self.processors.append(processor)
+        print(f"Created {len(self.processors)} processors across "
+              f"{len({a.country for a in self.processors})} countries")
 
-        print(f"Created {len(self.processors)} processors")
+    def _create_manufacturers(self, country_shares):
+        """One manufacturer per producing country, sized to share of global product demand."""
+        intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
+        headroom = self.config.get("manufacturer_capacity_headroom", 1.5)
+        warmstart_frac = self.config.get("manufacturer_warmstart_input_fraction", 0.5)
 
-    def _create_transport(self):
-        """Create transport agents."""
-        n_transport = self.config.get("n_transport", 10)
+        # Total nameplate sized to baseline product demand x headroom.
+        total_capacity = self.baseline_product_demand_per_step * headroom
 
-        modes = ['ship', 'rail', 'truck']
+        for entry in country_shares:
+            country = entry['country']
+            share = entry['share']
+            cap = total_capacity * share
+            mfr = ManufacturerAgent(
+                unique_id=self.next_id(),
+                model=self,
+                country=country,
+                mineral_intensity=intensity,
+                production_capacity=cap,
+            )
+            mfr.input_inventory = mfr.target_inventory * warmstart_frac
+            self.schedule.add(mfr)
+            self.manufacturers.append(mfr)
+        print(f"Created {len(self.manufacturers)} manufacturer aggregates "
+              f"(one per producing country)")
+
+    def _create_retailers(self, country_shares):
+        """One retailer per consumer country, sized to that country's demand share."""
+        reorder_mult = self.config.get("retailer_reorder_point_multiplier", 2.0)
+        order_mult = self.config.get("retailer_order_quantity_multiplier", 3.0)
+
+        for entry in country_shares:
+            country = entry['country']
+            share = entry['share']
+            country_demand = self.baseline_product_demand_per_step * share
+            retailer = RetailerAgent(
+                unique_id=self.next_id(),
+                model=self,
+                country=country,
+                reorder_point=country_demand * reorder_mult,
+                order_quantity=country_demand * order_mult,
+            )
+            self.schedule.add(retailer)
+            self.retailers.append(retailer)
+        print(f"Created {len(self.retailers)} retailers (one per consumer country)")
+
+    def _create_consumers(self, country_shares):
+        """One consumer per country, sized to that country's share of global demand."""
+        price_sensitivity = self.config.get("consumer_price_sensitivity", -0.8)
+
+        for entry in country_shares:
+            country = entry['country']
+            share = entry['share']
+            base_demand = self.baseline_product_demand_per_step * share
+            consumer = ConsumerAgent(
+                unique_id=self.next_id(),
+                model=self,
+                country=country,
+                base_demand=base_demand,
+                price_sensitivity=price_sensitivity,
+            )
+            self.schedule.add(consumer)
+            self.consumers.append(consumer)
+        print(f"Created {len(self.consumers)} consumers (one per consumer country)")
+
+    def _create_transport(self, fleet_data):
+        """Create per-country transport agents from the fleet table."""
         costs = {
             'ship':  self.config.get("transport_cost_ship", 10),
             'rail':  self.config.get("transport_cost_rail", 25),
             'truck': self.config.get("transport_cost_truck", 50),
         }
-        lead_times = {
-            'ship':  self.config.get("transport_lead_time_ship", 7),
-            'rail':  self.config.get("transport_lead_time_rail", 4),
-            'truck': self.config.get("transport_lead_time_truck", 2),
-        }
+        for entry in fleet_data:
+            country = entry['country']
+            mode = entry['mode']
+            for _ in range(entry['n_agents']):
+                t = TransportAgent(
+                    unique_id=self.next_id(),
+                    model=self,
+                    country=country,
+                    mode=mode,
+                    cost_per_unit=costs.get(mode, 20),
+                    capacity=entry['capacity_per_agent'],
+                )
+                self.schedule.add(t)
+                self.transport_agents.append(t)
+        print(f"Created {len(self.transport_agents)} transport agents across "
+              f"{len({a.country for a in self.transport_agents})} countries")
 
-        for i in range(n_transport):
-            mode = modes[i % len(modes)]
-            transport = TransportAgent(
-                unique_id=self.next_id(),
-                model=self,
-                mode=mode,
-                cost_per_unit=costs[mode],
-                lead_time=lead_times[mode],
-                capacity=10000,
-            )
-            self.schedule.add(transport)
-            self.transport_agents.append(transport)
+    # ------------------------------------------------------------------
+    # Routing / dispatch
+    # ------------------------------------------------------------------
 
-        print(f"Created {len(self.transport_agents)} transport agents")
+    def select_transport(self, mode, prefer_country=None):
+        """Pick a transport agent of the given mode, preferring a country.
 
-    def _create_manufacturers(self):
-        """Create manufacturer agents.
-
-        Capacity is sized from the baseline product demand per step (with a
-        small headroom multiplier).
+        Returns the chosen agent, or None if the fleet is empty.
         """
-        n_manufacturers = self.config.get("n_manufacturers", 8)
-        mineral_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
-        capacity_headroom = self.config.get("manufacturer_capacity_headroom", 1.5)
+        if not self.transport_agents:
+            return None
+        mode_pool = [t for t in self.transport_agents if t.mode == mode]
+        if not mode_pool:
+            mode_pool = list(self.transport_agents)
+        if prefer_country:
+            local = [t for t in mode_pool if t.country == prefer_country]
+            if local:
+                return self.random_state.choice(local)
+        return self.random_state.choice(mode_pool)
 
-        manufacturer_capacity = (
-            self.baseline_product_demand_per_step * capacity_headroom / n_manufacturers
-        )
+    def dispatch_shipment(self, material_type, quantity, origin_country,
+                          dest_country, destination, mineral_tons=0.0):
+        """Pick a route + transport agent and queue the shipment.
 
-        for _ in range(n_manufacturers):
-            manufacturer = ManufacturerAgent(
-                unique_id=self.next_id(),
-                model=self,
-                mineral_intensity=mineral_intensity,
-                production_capacity=manufacturer_capacity,
-            )
-            self.schedule.add(manufacturer)
-            self.manufacturers.append(manufacturer)
-
-        print(
-            f"Created {len(self.manufacturers)} manufacturers "
-            f"(capacity ~{manufacturer_capacity:,.2f} units/step each)"
-        )
-
-    def _create_retailers(self):
-        """Create retailer agents.
-
-        Reorder point and order quantity are sized from per-retailer baseline
-        product demand.
+        Returns True if dispatched. Even when chokepoints are closed, the
+        shipment is dispatched onto the longest-fallback route; the
+        TransportAgent's per-step delivery check defers arrival until the
+        chokepoint reopens.
         """
-        n_retailers = self.config.get("n_retailers", 12)
+        if quantity <= 0:
+            return False
 
-        avg_demand_per_retailer = self.baseline_product_demand_per_step / n_retailers
-
-        reorder_multiplier = self.config.get("retailer_reorder_point_multiplier", 2.0)
-        order_multiplier = self.config.get("retailer_order_quantity_multiplier", 3.0)
-
-        reorder_point = avg_demand_per_retailer * reorder_multiplier
-        order_quantity = avg_demand_per_retailer * order_multiplier
-
-        for _ in range(n_retailers):
-            retailer = RetailerAgent(
-                unique_id=self.next_id(),
-                model=self,
-                reorder_point=reorder_point,
-                order_quantity=order_quantity,
-            )
-            self.schedule.add(retailer)
-            self.retailers.append(retailer)
-
-        print(
-            f"Created {len(self.retailers)} retailers "
-            f"(reorder_point={reorder_point:,.2f}, Q={order_quantity:,.2f})"
+        route = select_route_or_fallback(
+            origin_country, dest_country, set(self.closed_chokepoints),
         )
+        if route is None:
+            # Truly unknown country pair -- treat as direct, 1-step truck.
+            chokepoints, lead_time, mode = ([], 1, 'truck')
+        else:
+            chokepoints, lead_time, mode = route
 
-    def _create_consumers(self):
-        """Create consumer agents using the precomputed baseline demand."""
-        n_consumers = self.config.get("n_consumers", 100)
-        price_sensitivity = self.config.get("consumer_price_sensitivity", -0.8)
+        transport = self.select_transport(mode, prefer_country=origin_country)
+        if transport is None:
+            # No fleet at all; deliver immediately to keep simulation alive.
+            destination.receive_shipment(material_type, quantity,
+                                         mineral_tons, origin_country)
+            return True
 
-        base_demand_per_consumer = (
-            self.baseline_product_demand_per_step / n_consumers
+        transport.accept_shipment(
+            material_type=material_type,
+            quantity=quantity,
+            destination=destination,
+            origin_jurisdiction=origin_country,
+            dest_jurisdiction=dest_country,
+            mineral_tons=mineral_tons,
+            chokepoints=chokepoints,
+            lead_time=lead_time,
         )
-
-        print(f"Per consumer: {base_demand_per_consumer:,.4f} units/step")
-
-        for _ in range(n_consumers):
-            consumer = ConsumerAgent(
-                unique_id=self.next_id(),
-                model=self,
-                base_demand=base_demand_per_consumer,
-                price_sensitivity=price_sensitivity,
-            )
-            self.schedule.add(consumer)
-            self.consumers.append(consumer)
-
-        print(f"Created {len(self.consumers)} consumers")
-
-    def _create_recyclers(self):
-        """Create recycling agents.
-
-        Each recycler claims a fraction of the step's initial EOL bucket
-        independently, so we pass through collection_rate / n_recyclers
-        and the model's collect_eol() arithmetic adds up exactly to the
-        configured aggregate collection_rate (no compounding shortfall).
-        """
-        n_recyclers = self.config.get("n_recyclers", 3)
-        collection_rate = self.config.get("collection_rate", 0.30)
-        recovery_efficiency = self.config.get("recovery_efficiency", 0.70)
-        processing_cost = self.config.get("recycling_processing_cost", 5000)
-
-        for _ in range(n_recyclers):
-            recycler = RecyclingAgent(
-                unique_id=self.next_id(),
-                model=self,
-                collection_rate=collection_rate / n_recyclers,
-                recovery_efficiency=recovery_efficiency,
-                processing_cost=processing_cost,
-            )
-            self.schedule.add(recycler)
-            self.recyclers.append(recycler)
-
-        print(f"Created {len(self.recyclers)} recyclers")
-
-    def _setup_data_collector(self):
-        """Setup Mesa DataCollector for tracking metrics."""
-        self.datacollector = DataCollector(
-            model_reporters={
-                "Step": lambda m: m.current_step,
-                "Global_Price": lambda m: m.current_price,
-                "Total_Processor_Inventory": lambda m: sum(a.inventory for a in m.processors),
-                "Total_Mine_Output": lambda m: sum(a.available_production_this_step for a in m.mines),
-                "Total_Recycled_Supply": lambda m: sum(a.recycled_this_step for a in m.recyclers),
-                "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if a.disruption_counter > 0),
-                "Mothballed_Mines_Count": lambda m: sum(1 for a in m.mines if a.mothballed),
-                "Total_Consumer_Demand_Units": lambda m: sum(a.current_demand for a in m.consumers),
-                "Fulfilled_Demand_Units": lambda m: sum(a.fulfilled_demand for a in m.consumers),
-                "Unfulfilled_Demand_Units": lambda m: sum(a.unfulfilled_demand for a in m.consumers),
-                "Avg_Manufacturer_Intensity": lambda m: (
-                    np.mean([a.mineral_intensity for a in m.manufacturers])
-                    if m.manufacturers else 0
-                ),
-                "Total_Reserves": lambda m: sum(a.reserves for a in m.mines),
-                "Embargoed_Mines_Count": lambda m: sum(
-                    1 for a in m.mines if m.is_embargoed(a.jurisdiction)
-                ),
-                "Total_Embargoed_Production": lambda m: sum(
-                    a.embargoed_production_this_step for a in m.mines
-                ),
-                "Total_Domestic_Stockpile": lambda m: sum(a.domestic_stockpile for a in m.mines),
-            }
-        )
+        return True
 
     # ------------------------------------------------------------------
     # Per-step orchestration
     # ------------------------------------------------------------------
 
     def step(self):
-        """Execute one time step of the model."""
-        # 1. Update disruption / embargo state before any mine reads it.
+        # 1. Update disruption / embargo / chokepoint state first.
         self._check_geopolitical_events()
         self._check_political_embargoes()
+        self._check_chokepoint_crises()
 
-        # 2. Snapshot the EOL bucket for fair recycler share-out.
+        # 2. Snapshot EOL bucket for fair recycler share-out.
         self._eol_initial_this_step = float(
             self.end_of_life_pool.get(self.current_step, 0.0)
         )
@@ -408,25 +383,17 @@ class MineralSupplyChainModel(Model):
             for agent in order:
                 agent.step()
 
-        # Keep the Mesa scheduler's step counter in sync for any external
-        # consumers that read it.
         self.schedule.steps += 1
         self.schedule.time += 1
 
-        # 4. Update global price based on supply/demand
+        # 4. Update global price.
         self._update_price()
-
-        # 5. Collect data
+        # 5. Collect data.
         self.datacollector.collect(self)
-
-        # 6. Increment step counter (do this last so agents see current_step
-        # as the index of the step they're executing).
+        # 6. Increment step counter.
         self.current_step += 1
 
     def _check_geopolitical_events(self):
-        """Check for and handle geopolitical events."""
-        # Decrement active disruptions; iterate over a snapshot of the
-        # keys so we can safely mutate the dict.
         for jurisdiction in list(self.active_disruptions):
             remaining = self.active_disruptions[jurisdiction]
             if remaining <= 1:
@@ -439,15 +406,12 @@ class MineralSupplyChainModel(Model):
             self._trigger_geopolitical_event()
 
     def _check_political_embargoes(self):
-        """Tick existing embargoes and start any scheduled to begin now."""
         for country in list(self.active_embargoes):
             remaining = self.active_embargoes[country]
             if remaining <= 1:
                 del self.active_embargoes[country]
-                print(
-                    f"Political embargo lifted: {country} resumes export at "
-                    f"step {self.current_step}"
-                )
+                print(f"Political embargo lifted: {country} resumes export at "
+                      f"step {self.current_step}")
             else:
                 self.active_embargoes[country] = remaining - 1
 
@@ -455,46 +419,55 @@ class MineralSupplyChainModel(Model):
             if emb.get('start_step') == self.current_step:
                 country = emb['country']
                 duration = int(emb['duration'])
-                if country in self.active_embargoes:
-                    self.active_embargoes[country] = max(
-                        self.active_embargoes[country], duration
-                    )
-                else:
-                    self.active_embargoes[country] = duration
-                print(
-                    f"Political embargo: {country} withholds export for {duration} steps "
-                    f"(starting step {self.current_step})"
+                self.active_embargoes[country] = max(
+                    self.active_embargoes.get(country, 0), duration,
                 )
+                print(f"Political embargo: {country} withholds export for "
+                      f"{duration} steps (starting step {self.current_step})")
+
+    def _check_chokepoint_crises(self):
+        """Tick existing chokepoint closures and start scheduled ones."""
+        for cp in list(self.closed_chokepoints):
+            end = self.closed_chokepoints[cp]
+            if end <= self.current_step + 1:
+                del self.closed_chokepoints[cp]
+                print(f"Chokepoint reopened: {cp} at step {self.current_step}")
+
+        for crisis in self.scheduled_chokepoint_crises:
+            if crisis.get('start_step') == self.current_step:
+                cp = crisis['chokepoint']
+                duration = int(crisis['duration'])
+                if cp not in CHOKEPOINTS:
+                    print(f"Warning: unknown chokepoint '{cp}' (known: {CHOKEPOINTS})")
+                    continue
+                end_step = self.current_step + duration
+                existing = self.closed_chokepoints.get(cp, 0)
+                self.closed_chokepoints[cp] = max(existing, end_step)
+                print(f"Chokepoint crisis: {cp} closed for {duration} steps "
+                      f"(starting step {self.current_step})")
 
     def is_embargoed(self, jurisdiction):
-        """Return True if the named jurisdiction is currently under embargo."""
         return jurisdiction in self.active_embargoes
 
     def _trigger_geopolitical_event(self):
-        """Trigger a geopolitical disruption event."""
         jurisdictions = list({mine.jurisdiction for mine in self.mines})
         if not jurisdictions:
             return
-
         affected = select_affected_jurisdiction(jurisdictions, self.random_state)
-
         min_dur = self.config.get("geopolitical_duration_min", 5)
         max_dur = self.config.get("geopolitical_duration_max", 15)
         duration = calculate_disruption_duration(min_dur, max_dur, self.random_state)
 
         self.active_disruptions[affected] = duration
-
         for mine in self.mines:
             if mine.jurisdiction == affected:
                 mine.apply_geopolitical_disruption(duration)
-
         for transport in self.transport_agents:
             transport.apply_disruption(affected, duration)
 
         print(f"Geopolitical event! {affected} disrupted for {duration} steps")
 
     def _update_price(self):
-        """Update global price based on the supply/demand flow ratio."""
         supply_this_step = (
             sum(m.available_production_this_step for m in self.mines)
             + sum(r.recycled_this_step for r in self.recyclers)
@@ -507,7 +480,7 @@ class MineralSupplyChainModel(Model):
                 / len(self.manufacturers)
             )
         else:
-            avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
+            avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
         demand_this_step = max(total_product_demand * avg_intensity, 1e-9)
 
         window = int(self.config.get("price_signal_window_steps", 8))
@@ -537,36 +510,29 @@ class MineralSupplyChainModel(Model):
     # End-of-life pool
     # ------------------------------------------------------------------
 
-    def add_to_eol_pool(self, product_units):
-        """Add sold products to the EOL pool, stored as contained mineral tons."""
+    def add_to_eol_pool(self, product_units, mineral_tons=None):
         if product_units <= 0:
             return
-
-        if self.manufacturers:
-            avg_intensity = (
-                sum(m.mineral_intensity for m in self.manufacturers)
-                / len(self.manufacturers)
-            )
-        else:
-            avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.08)
-
-        mineral_tons = product_units * avg_intensity
+        if mineral_tons is None:
+            if self.manufacturers:
+                avg_intensity = (
+                    sum(m.mineral_intensity for m in self.manufacturers)
+                    / len(self.manufacturers)
+                )
+            else:
+                avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
+            mineral_tons = product_units * avg_intensity
+        if mineral_tons <= 0:
+            return
         future_step = self.current_step + self.product_lifetime
         self.end_of_life_pool[future_step] = (
             self.end_of_life_pool.get(future_step, 0) + mineral_tons
         )
 
     def get_eol_materials(self):
-        """Return contained-mineral tons currently sitting in this step's bucket."""
         return self.end_of_life_pool.get(self.current_step, 0)
 
     def collect_eol(self, rate):
-        """Claim a share of this step's *initial* EOL bucket.
-
-        The amount returned is rate * (bucket size at start of step), but
-        capped at the bucket remaining now (to handle floating-point drift
-        and to keep the bucket non-negative).
-        """
         if rate <= 0:
             return 0.0
         requested = self._eol_initial_this_step * rate
@@ -578,28 +544,59 @@ class MineralSupplyChainModel(Model):
         return actual
 
     def remove_from_eol_pool(self, mineral_tons):
-        """Remove collected mineral tons from this step's EOL bucket (legacy)."""
         current = self.end_of_life_pool.get(self.current_step, 0)
         self.end_of_life_pool[self.current_step] = max(0, current - mineral_tons)
+
+    # ------------------------------------------------------------------
+    # Data collection
+    # ------------------------------------------------------------------
+
+    def _setup_data_collector(self):
+        self.datacollector = DataCollector(
+            model_reporters={
+                "Step": lambda m: m.current_step,
+                "Global_Price": lambda m: m.current_price,
+                "Total_Processor_Inventory": lambda m: sum(a.inventory for a in m.processors),
+                "Total_Mine_Output": lambda m: sum(a.available_production_this_step for a in m.mines),
+                "Total_Recycled_Supply": lambda m: sum(a.recycled_this_step for a in m.recyclers),
+                "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if a.disruption_counter > 0),
+                "Mothballed_Mines_Count": lambda m: sum(1 for a in m.mines if a.mothballed),
+                "Total_Consumer_Demand_Units": lambda m: sum(a.current_demand for a in m.consumers),
+                "Fulfilled_Demand_Units": lambda m: sum(a.fulfilled_demand for a in m.consumers),
+                "Unfulfilled_Demand_Units": lambda m: sum(a.unfulfilled_demand for a in m.consumers),
+                "Avg_Manufacturer_Intensity": lambda m: (
+                    np.mean([a.mineral_intensity for a in m.manufacturers])
+                    if m.manufacturers else 0
+                ),
+                "Total_Reserves": lambda m: sum(a.reserves for a in m.mines),
+                "Embargoed_Mines_Count": lambda m: sum(
+                    1 for a in m.mines if m.is_embargoed(a.jurisdiction)
+                ),
+                "Total_Embargoed_Production": lambda m: sum(
+                    a.embargoed_production_this_step for a in m.mines
+                ),
+                "Total_Domestic_Stockpile": lambda m: sum(a.domestic_stockpile for a in m.mines),
+                "Closed_Chokepoints_Count": lambda m: len(m.closed_chokepoints),
+                "Total_In_Transit": lambda m: sum(
+                    sum(s['quantity'] for s in t.in_transit)
+                    for t in m.transport_agents
+                ),
+            }
+        )
 
     # ------------------------------------------------------------------
     # Run loop
     # ------------------------------------------------------------------
 
     def run_model(self, n_steps=None):
-        """Run the model for a specified number of steps."""
         if n_steps is None:
             n_steps = self.config.get("n_steps", 200)
-
         print(f"\nRunning {self.mineral_type} supply chain model for {n_steps} steps...")
-
         for i in range(n_steps):
             self.step()
             if (i + 1) % 50 == 0:
                 print(f"  Step {i + 1}/{n_steps} - Price: ${self.current_price:,.0f}/ton")
-
         print("Simulation complete!")
 
     def get_model_data(self):
-        """Get collected data as a pandas DataFrame."""
         return self.datacollector.get_model_vars_dataframe()

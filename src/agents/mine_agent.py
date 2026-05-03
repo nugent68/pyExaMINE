@@ -9,15 +9,15 @@ from mesa import Agent
 class MineAgent(Agent):
     """Agent representing a mine that extracts raw minerals."""
 
-    def __init__(self, unique_id, model, jurisdiction, ore_grade,
+    def __init__(self, unique_id, model, jurisdiction, facility,
                  production_capacity, extraction_cost, reserves):
         """Initialize a MineAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
-            jurisdiction: Country/region name
-            ore_grade: Fraction of pure mineral in ore (0-1, metadata only)
+            jurisdiction: Country/region name (also exposed as .country)
+            facility: Facility / mine name (e.g. 'Greenbushes')
             production_capacity: Maximum tons/step (contained mineral)
             extraction_cost: Cost per ton to extract ($/ton)
             reserves: Total remaining reserves (tons)
@@ -26,7 +26,9 @@ class MineAgent(Agent):
 
         # Core attributes
         self.jurisdiction = jurisdiction
-        self.ore_grade = ore_grade
+        self.country = jurisdiction
+        self.facility = facility
+        self.label = f"{jurisdiction}/{facility}"
         self.production_capacity = production_capacity
         self.extraction_cost = extraction_cost
         self.reserves = reserves
@@ -67,8 +69,15 @@ class MineAgent(Agent):
         self.available_production_this_step = 0
         self.embargoed_production_this_step = 0
 
-        # Tick down any active disruption. A disruption blocks production
-        # this step regardless of profitability.
+        # Drain any post-embargo stockpile onto the market each step,
+        # regardless of disruption / mothball status (the material is
+        # already extracted and sitting in a warehouse). Skipped while
+        # the country is still embargoed.
+        if self.domestic_stockpile > 0 and not self.model.is_embargoed(self.jurisdiction):
+            self._release_stockpile()
+
+        # Tick down any active disruption. A disruption blocks new
+        # production this step regardless of profitability.
         if self.disruption_counter > 0:
             self.disruption_counter -= 1
             return
@@ -108,12 +117,20 @@ class MineAgent(Agent):
         loss is modeled separately on the processor side via conversion_efficiency.
         ore_grade is retained as metadata for cost/reporting only.
 
+        Output flexes with price via _utilization_factor: at the
+        anchored "normal" price multiple of extraction cost, the mine
+        produces production_capacity (the USGS-reported baseline). Above
+        that it can ramp up to ~max/baseline of nameplate; below it it
+        ramps down toward min/baseline, with hard mothball below cost
+        handled in step().
+
         If this mine's jurisdiction is under a political embargo, the
         produced material is routed to a domestic_stockpile rather than
         being made available on the international market. Reserves are
         debited either way (the country still extracted the ore).
         """
-        output = min(self.production_capacity, self.reserves)
+        factor = self._utilization_factor()
+        output = min(self.production_capacity * factor, self.reserves)
 
         self.reserves -= output
         self.cumulative_production += output
@@ -124,6 +141,61 @@ class MineAgent(Agent):
         else:
             self.production_this_step = output
             self.available_production_this_step = output
+
+    def _utilization_factor(self):
+        """Return a multiplier on production_capacity based on price.
+
+        production_capacity is treated as the *baseline-utilization*
+        output (matching USGS-reported actual production). Real mines
+        run between ~50% and ~100% of nameplate depending on margin.
+        We linearly interpolate utilization between umin and umax over
+        the price/extraction-cost ratio range [1.0, ratio_max], then
+        rescale by 1/baseline so that at the anchored "normal" price
+        the factor lands at 1.0 and aggregate output matches the
+        original USGS figure.
+        """
+        cfg = self.model.config
+        baseline = cfg.get("mine_baseline_utilization", 0.75)
+        umin = cfg.get("mine_min_utilization", 0.5)
+        umax = cfg.get("mine_max_utilization", 1.0)
+        ratio_max = cfg.get("mine_max_utilization_ratio", 2.5)
+
+        if self.extraction_cost <= 0:
+            # Pathological config -- pin to baseline so we don't divide by 0.
+            return 1.0
+
+        price = self.model.current_price
+        ratio = price / self.extraction_cost
+
+        if ratio <= 1.0:
+            utilization = umin
+        elif ratio >= ratio_max:
+            utilization = umax
+        else:
+            utilization = umin + (umax - umin) * (ratio - 1.0) / (ratio_max - 1.0)
+
+        return utilization / baseline if baseline > 0 else 1.0
+
+    def _release_stockpile(self):
+        """Release a fraction of the post-embargo stockpile onto the market.
+
+        Bled out over many steps (default ~26 weeks) rather than dumped at
+        once, so a long embargo doesn't translate into a single-step
+        supply shock when it lifts. The release adds to the same
+        available_production_this_step bucket the price signal uses and
+        the same production_this_step bucket processors purchase from.
+        """
+        release_steps = max(
+            1, int(self.model.config.get("post_embargo_release_steps", 26))
+        )
+        chunk = self.domestic_stockpile / release_steps
+        # Below ~1 step's worth of float dust, just drain the remainder
+        # so the stockpile doesn't asymptote forever.
+        if self.domestic_stockpile <= chunk * 1.01:
+            chunk = self.domestic_stockpile
+        self.domestic_stockpile -= chunk
+        self.production_this_step += chunk
+        self.available_production_this_step += chunk
 
     def _trigger_disruption(self):
         """Trigger a random disruption event."""
