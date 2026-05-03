@@ -53,8 +53,15 @@ class MineralSupplyChainModel(Model):
         self.price_floor = config["price_floor"]
         self.price_ceiling = config["price_ceiling"]
 
-        # End-of-life pool for recycling (dict: step -> mineral tons)
+        # End-of-life pool for recycling.
+        #   end_of_life_pool: deposit *calendar* (dict: step -> mineral tons).
+        #     Each step's matured deposits roll into available_eol_pool at
+        #     the start of that step, then the calendar entry is dropped.
+        #   available_eol_pool: running scrap stockpile available for
+        #     collection. Anything not collected this step rolls forward
+        #     automatically (was previously silently lost).
         self.end_of_life_pool = {}
+        self.available_eol_pool = 0.0
         self.product_lifetime = config.get("product_lifetime_steps", 25)
         self._eol_initial_this_step = 0.0
 
@@ -74,7 +81,11 @@ class MineralSupplyChainModel(Model):
         # and by the routing engine when picking a route at dispatch time.
         self.closed_chokepoints = {}
 
-        # Rolling supply/demand history for the price signal
+        # Rolling supply/demand history for the price signal. Warm-started
+        # to baseline mineral demand so the smoother isn't dominated by
+        # the startup transient (lead-time gap before the first ore
+        # shipments arrive at processors). Populated after data load in
+        # ``_resolve_baseline_demand``.
         self.supply_flow_history: list = []
         self.demand_flow_history: list = []
 
@@ -192,6 +203,15 @@ class MineralSupplyChainModel(Model):
                 f"step {s} -> {d:,.0f} t/yr" for s, d in knots
             )
             print(f"Demand trajectory ({scenario}): {knot_summary}")
+
+        # Seed the price-signal smoother at baseline so the supply ratio
+        # starts at 1.0. Otherwise the first ~lead_time steps see zero
+        # processor throughput (no ore has arrived yet) and the smoother
+        # would synthesise an artificial price spike at startup.
+        window = int(self.config.get("price_signal_window_steps", 8))
+        seed = self.baseline_mineral_demand_per_step
+        self.supply_flow_history = [seed] * window
+        self.demand_flow_history = [seed] * window
 
     def annual_demand_at(self, step):
         """Linearly interpolate annual mineral demand at a given step.
@@ -479,10 +499,15 @@ class MineralSupplyChainModel(Model):
         self._check_political_embargoes()
         self._check_chokepoint_crises()
 
-        # 2. Snapshot EOL bucket for fair recycler share-out.
-        self._eol_initial_this_step = float(
-            self.end_of_life_pool.get(self.current_step, 0.0)
-        )
+        # 2. Mature any deposits whose product-lifetime ends this step
+        #    (and any earlier ones that somehow weren't drained) into the
+        #    persistent available_eol_pool, then snapshot for fair recycler
+        #    share-out. Anything not collected this step rolls forward
+        #    automatically -- the previous behavior dropped uncollected
+        #    EOL on the floor each step (a silent mineral-mass leak).
+        for step in [s for s in self.end_of_life_pool if s <= self.current_step]:
+            self.available_eol_pool += self.end_of_life_pool.pop(step)
+        self._eol_initial_this_step = float(self.available_eol_pool)
 
         # 3. Activate agents in supply-chain order; shuffle within tier.
         for tier in self.tiers:
@@ -581,9 +606,20 @@ class MineralSupplyChainModel(Model):
         print(f"Geopolitical event! {affected} disrupted for {duration} steps")
 
     def _update_price(self):
-        supply_this_step = (
-            sum(m.available_production_this_step for m in self.mines)
-            + sum(r.recycled_this_step for r in self.recyclers)
+        # Supply signal: mineral that has actually *landed* in the post-
+        # mine pipeline this step (processor throughput + recycled
+        # arrivals at processors). The previous signal summed mine output
+        # offered at the pithead plus recycler dispatch -- both upstream
+        # of multi-week transit. During a chokepoint crisis, mines kept
+        # producing and recyclers kept dispatching while in-transit
+        # shipments stalled, so the price signal saw "ample supply" even
+        # when processors were running dry. Using processor processing
+        # rate + recycled receipts as the supply signal collapses
+        # correctly when transit is blocked, which is the actual
+        # mechanism by which spot prices spike during chokepoint events.
+        supply_this_step = sum(
+            p.processed_this_step + p.recycled_received_this_step
+            for p in self.processors
         )
 
         total_product_demand = sum(c.current_demand for c in self.consumers)
@@ -674,7 +710,7 @@ class MineralSupplyChainModel(Model):
         )
 
     def get_eol_materials(self):
-        return self.end_of_life_pool.get(self.current_step, 0)
+        return self.available_eol_pool
 
     def collect_eol(self, rate):
         if rate <= 0:
@@ -683,26 +719,25 @@ class MineralSupplyChainModel(Model):
         return self.collect_eol_tons(requested)
 
     def collect_eol_tons(self, tons):
-        """Collect a fixed tonnage from this step's EOL bucket.
+        """Collect a fixed tonnage from the available EOL stockpile.
 
         Caller is responsible for sizing the request (typically a fair
         share of the snapshot, possibly capped at facility capacity).
         Returns the actual tonnage collected, which may be less than
-        requested if the live bucket has already been drained by other
-        recyclers earlier in the same step.
+        requested if the stockpile has already been drained by other
+        recyclers earlier in the same step. Anything not collected stays
+        in available_eol_pool and rolls into next step's snapshot.
         """
         if tons <= 0:
             return 0.0
-        remaining = self.end_of_life_pool.get(self.current_step, 0.0)
-        actual = min(tons, remaining)
+        actual = min(tons, self.available_eol_pool)
         if actual <= 0:
             return 0.0
-        self.end_of_life_pool[self.current_step] = max(0.0, remaining - actual)
+        self.available_eol_pool = max(0.0, self.available_eol_pool - actual)
         return actual
 
     def remove_from_eol_pool(self, mineral_tons):
-        current = self.end_of_life_pool.get(self.current_step, 0)
-        self.end_of_life_pool[self.current_step] = max(0, current - mineral_tons)
+        self.available_eol_pool = max(0.0, self.available_eol_pool - mineral_tons)
 
     # ------------------------------------------------------------------
     # Data collection
@@ -716,8 +751,21 @@ class MineralSupplyChainModel(Model):
                 "Marginal_Cost": lambda m: m._marginal_cost,
                 "Cheapest_Active_Cost": lambda m: m._cheapest_cost,
                 "Total_Processor_Inventory": lambda m: sum(a.inventory for a in m.processors),
-                "Total_Mine_Output": lambda m: sum(a.available_production_this_step for a in m.mines),
+                # Per-step *new* extraction (no pithead double-counting),
+                # so a cumulative sum of this column equals total tonnes
+                # produced over the run.
+                "Total_Mine_Output": lambda m: sum(a.extracted_this_step for a in m.mines),
                 "Total_Recycled_Supply": lambda m: sum(a.recycled_this_step for a in m.recyclers),
+                # The supply signal that drives the price update: mineral
+                # actually arriving at processors (primary processed +
+                # recycled receipts). Visible as a column so users can see
+                # the chokepoint-disruption signal that mines/recyclers
+                # alone would miss.
+                "Total_Processor_Throughput": lambda m: sum(
+                    p.processed_this_step + p.recycled_received_this_step
+                    for p in m.processors
+                ),
+                "Available_EOL_Pool": lambda m: m.available_eol_pool,
                 "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if a.disruption_counter > 0),
                 "Mothballed_Mines_Count": lambda m: sum(1 for a in m.mines if a.mothballed),
                 "Total_Consumer_Demand_Units": lambda m: sum(a.current_demand for a in m.consumers),

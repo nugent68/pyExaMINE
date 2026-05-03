@@ -42,8 +42,12 @@ class RecyclingAgent(Agent):
         self.processing_cost = processing_cost
         self.capacity_per_step = capacity_per_step
 
-        # Storage (collected mineral tons, pre-recovery-efficiency)
+        # Storage. Two pools so we don't double-apply recovery_efficiency
+        # if material has to wait across steps for downstream headroom:
+        #   storage         -- collected mineral tons, pre-recovery (raw scrap)
+        #   recovered_pool  -- post-recovery, awaiting dispatch to processors
         self.storage = 0
+        self.recovered_pool = 0.0
 
         # Tracking
         self.recycled_this_step = 0
@@ -102,43 +106,69 @@ class RecyclingAgent(Agent):
         still works.
 
         Distribution is region-preferenced: same-country processors get
-        first call (split evenly among them), then same-region (via
-        the routing module's COUNTRY_REGION map), then the rest of the
-        world. Within each tier the split is even. This avoids the
-        original even-across-the-globe split sending small amounts of
-        recycled USA mineral to a Tianqi facility every step.
+        first call (split by available headroom among them), then same-
+        region (via the routing module's COUNTRY_REGION map), then the
+        rest of the world. Within each tier the split is proportional to
+        each processor's remaining inventory headroom -- a processor
+        already near its inventory cap gets a smaller share, and any
+        recovered material that doesn't fit in this step's targets stays
+        in ``recovered_pool`` for the next step. Without this, recyclers
+        could push processors past their inventory_cap and silently
+        bypass the backpressure that throttles primary ore purchases.
         """
-        if self.storage <= 0:
-            return
-
         if self.model.current_price <= self.processing_cost:
             # Hold raw material in storage until the price recovers.
             return
 
-        recovered = self.storage * self.recovery_efficiency
-        self.storage = 0
+        # Move newly-collected scrap through the recovery efficiency
+        # *once*, then add it to the dispatch-ready pool. Keeping
+        # recovered material separate means a sit-across-steps shipment
+        # (because all processors are full this step) doesn't get
+        # double-discounted by recovery_efficiency next step.
+        if self.storage > 0:
+            self.recovered_pool += self.storage * self.recovery_efficiency
+            self.storage = 0
+
+        if self.recovered_pool <= 0:
+            return
 
         processors = self.model.processors
-        if not processors or recovered <= 0:
+        if not processors:
             return
 
         targets = self._region_preferenced_targets(processors)
         if not targets:
             return
 
-        amount_per_processor = recovered / len(targets)
-        for processor in targets:
+        headrooms = [p.headroom_for_recycled() for p in targets]
+        total_headroom = sum(headrooms)
+        if total_headroom <= 0:
+            # All targets already at their inventory cap -- hold the
+            # recovered material for next step.
+            return
+
+        to_dispatch = min(self.recovered_pool, total_headroom)
+        dispatched = 0.0
+        for processor, headroom in zip(targets, headrooms):
+            if headroom <= 0:
+                continue
+            share = to_dispatch * (headroom / total_headroom)
+            share = min(share, headroom)
+            if share <= 0:
+                continue
             self.model.dispatch_shipment(
                 material_type='recycled',
-                quantity=amount_per_processor,
+                quantity=share,
                 origin_country=self.country,
                 dest_country=processor.country,
                 destination=processor,
-                mineral_tons=amount_per_processor,
+                mineral_tons=share,
             )
+            dispatched += share
 
-        self.recycled_this_step = recovered
-        self.total_recycled += recovered
+        self.recovered_pool = max(0.0, self.recovered_pool - dispatched)
+        self.recycled_this_step = dispatched
+        self.total_recycled += dispatched
 
     def _region_preferenced_targets(self, processors):
         """Pick the highest-preference tier of processors.

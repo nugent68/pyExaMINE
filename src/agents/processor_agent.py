@@ -179,6 +179,37 @@ class ProcessorAgent(Agent):
                 if shipment.get('destination') is self and shipment.get('material') == 'ore':
                     yield shipment
 
+    def headroom_for_recycled(self):
+        """Inventory headroom available for new recycled deliveries (post-
+        conversion tonnes).
+
+        Recycled mineral lands directly in ``inventory`` (no conversion
+        loss), so it counts 1:1 against ``inventory_cap``. Existing
+        inventory + raw_ore_buffer (× efficiency) + ore in transit (×
+        efficiency) + recycled in transit (× 1) all reserve cap space;
+        what's left is the headroom a recycler can dispatch into.
+        Returns 0.0 if the processor is already at or above its cap.
+        """
+        eff = self.conversion_efficiency
+        in_transit_ore = 0.0
+        in_transit_recycled = 0.0
+        for transport in self.model.transport_agents:
+            for shipment in transport.in_transit:
+                if shipment.get('destination') is not self:
+                    continue
+                mat = shipment.get('material')
+                if mat == 'ore':
+                    in_transit_ore += shipment['quantity']
+                elif mat == 'recycled':
+                    in_transit_recycled += shipment['quantity']
+        committed = (
+            self.inventory
+            + self.raw_ore_buffer * eff
+            + in_transit_ore * eff
+            + in_transit_recycled
+        )
+        return max(0.0, self.inventory_cap - committed)
+
     def _process_ore(self):
         """Convert raw ore to processed mineral."""
         if self.raw_ore_buffer <= 0:

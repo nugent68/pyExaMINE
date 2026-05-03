@@ -68,14 +68,21 @@ class MineAgent(Agent):
         # first restart is always a cold one.
         self.last_mothball_step = -10**9
 
-        # Production tracking. Two views per step:
-        #   available_production_this_step: gross output offered to the
-        #     international market this step. Set once in _produce (when
-        #     not embargoed) and never decremented; used by the price
-        #     signal and the gross-production data series.
-        #   production_this_step: same value initially, but decremented by
-        #     processor purchases as the step progresses; used by the
-        #     processor-purchase loop to discover what is still for sale.
+        # Production tracking. Three views per step:
+        #   extracted_this_step: tonnes newly extracted from reserves this
+        #     step (set in _produce; 0 if mothballed/disrupted/no reserves).
+        #     This is the *true* per-step new production; sums correctly
+        #     across steps (no pithead double-counting).
+        #   available_production_this_step: gross output OFFERED to the
+        #     international market this step (= pithead carry-over + new
+        #     extraction + post-embargo release chunk). NOT decremented as
+        #     processors buy. Used for inspection / debugging only -- do
+        #     NOT cumulate this across steps; it double-counts pithead
+        #     carry-over.
+        #   production_this_step: same starting value as available_*, but
+        #     decremented by processor purchases as the step progresses;
+        #     used by the processor-purchase loop to discover what is
+        #     still for sale.
         # pithead_stockpile holds extracted-but-unsold mineral. Real mines
         # stockpile at site when the buyer doesn't take the full lift; the
         # material isn't lost the way it would be if production_this_step
@@ -85,6 +92,7 @@ class MineAgent(Agent):
         # (the embargo would also bottle up the stockpile).
         self.production_this_step = 0
         self.available_production_this_step = 0
+        self.extracted_this_step = 0.0
         self.cumulative_production = 0
         self.embargoed_production_this_step = 0
         self.domestic_stockpile = 0
@@ -103,23 +111,19 @@ class MineAgent(Agent):
 
     def step(self):
         """Execute one time step of mine behavior."""
-        # 0. Capacity expansion + reserve replacement, applied each step.
-        #    Without these, a 24-year run leaves nameplate capacity stuck
-        #    at 2024 levels even as demand grows ~10x by 2050. Both rates
-        #    are mineral-specific config knobs (see *_config.py); zero
-        #    disables growth. Capacity also requires reserves -- if
-        #    reserves are depleted, expansion is skipped.
+        # 0. Capacity expansion. Only operational mines (not mothballed,
+        #    not currently disrupted) sink capex into expansion -- a
+        #    care-and-maintenance shaft doesn't grow nameplate. Reserves
+        #    must also be > 0 (no point expanding a depleted asset).
+        #    Reserve replacement is now applied *inside* _produce, scaled
+        #    to actual extraction this step -- previously it ran every
+        #    step regardless of operational status, so a mothballed mine
+        #    was silently gifted exploration reserves out of nothing.
         cfg = self.model.config
         steps_per_year = cfg.get("steps_per_year", 52)
         cap_growth_yr = cfg.get("mine_capacity_growth_per_year", 0.0)
-        if cap_growth_yr > 0 and self.reserves > 0:
+        if cap_growth_yr > 0 and self.operational and self.reserves > 0:
             self.production_capacity *= (1.0 + cap_growth_yr / steps_per_year)
-        replacement_rate = cfg.get("reserve_replacement_rate", 0.0)
-        if replacement_rate > 0 and self.cumulative_production > 0:
-            # Constant fraction of *recent* extraction is replaced via
-            # exploration -- approximated as fraction of the current
-            # step's expected capacity output, applied to reserves.
-            self.reserves += self.production_capacity * replacement_rate
 
         # 1. Carry forward any unsold production from last step into the
         #    pithead stockpile before resetting per-step counters. This
@@ -130,6 +134,7 @@ class MineAgent(Agent):
 
         self.production_this_step = 0
         self.available_production_this_step = 0
+        self.extracted_this_step = 0.0
         self.embargoed_production_this_step = 0
 
         # 2. Offer pithead stockpile to the international market unless
@@ -262,6 +267,16 @@ class MineAgent(Agent):
 
         self.reserves -= output
         self.cumulative_production += output
+        self.extracted_this_step = output
+
+        # Reserve replacement scales with *actual* this-step extraction
+        # (was: gross production_capacity each step, regardless of
+        # operational status). Exploration spend tracks production --
+        # a mine that doesn't produce this step doesn't grow reserves.
+        cfg = self.model.config
+        replacement_rate = cfg.get("reserve_replacement_rate", 0.0)
+        if replacement_rate > 0 and output > 0:
+            self.reserves += output * replacement_rate
 
         if self.model.is_embargoed(self.jurisdiction):
             self.domestic_stockpile += output
