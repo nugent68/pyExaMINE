@@ -205,12 +205,23 @@ the per-country shipping/rail/truck fleet.
   stockpile rather than reaching foreign processors. **On lift, the
   stockpile drains back into available supply** over
   `post_embargo_release_steps` (default 26) instead of being lost.
-- **Material Substitution** - Manufacturers reduce mineral intensity under
-  sustained high prices. The trigger counter is "sticky": brief dips
-  decrement rather than reset, so substitution responds to sustained
-  pressure rather than requiring an unbroken streak. As-built intensity
-  travels with each batch through the chain so EOL recovery is correct
-  even after intensity drifts down.
+- **Material Substitution (with reversion)** - Manufacturers reduce
+  mineral intensity under sustained high prices and partially revert
+  it under sustained low prices. Two sticky counters operate in
+  opposite price regions: `high_price_counter` triggers a forward
+  substitution step (intensity down by `substitution_rate` per cycle)
+  when price stays above `substitution_price_threshold` (default
+  1.5x initial); `low_price_counter` triggers a reversion step
+  (intensity back up by `substitution_revert_rate`) when price stays
+  below `substitution_revert_threshold` (default 0.667x initial).
+  Both counters decay in the dead zone between thresholds. Reversion
+  is intentionally slower than adoption (longer trigger window,
+  smaller per-cycle rate) reflecting the real-world cost of switching
+  back once new chemistry production lines are committed -- but it
+  exists, so the model captures the historical LFP↔NMC and Pt↔Pd
+  flips driven by relative-price reversals. As-built intensity
+  travels with each batch through the chain so EOL recovery is
+  correct even after intensity drifts down or back up.
 - **Circular Economy** - Recycling loop with a realistic product-lifetime
   lag (520 weeks for Li/Ni EVs, 624 weeks for Pt autocats). Each step's
   EOL bucket is snapshotted before any recycler runs, so multiple
@@ -519,13 +530,31 @@ severity, and the cost anchor provides long-run mean reversion.
   `Total_Embargoed_Production`, `Total_Domestic_Stockpile` (per step in the
   CSV time-series output).
 
-### Material Substitution
-- **Trigger**: Sticky counter — increments on high-price steps,
-  decrements (but does not reset) on dips. Investment fires once the
-  counter reaches `substitution_trigger_steps` (default 10), then resets.
-- **Effect**: Manufacturers reduce `mineral_intensity` by 5% per cycle
-- **Max reduction**: 30% (Li/Ni), 20% (Pt)
-- **Irreversible**: Once invested, intensity stays reduced
+### Material Substitution (with reversion)
+- **Forward trigger**: Sticky `high_price_counter` increments on
+  steps with price > `substitution_price_threshold` (default 1.5×
+  initial price), decrements otherwise. Substitution fires when the
+  counter reaches `substitution_trigger_steps` (default 10 Li/Ni,
+  12 Pt), then resets.
+- **Reversion trigger**: Sticky `low_price_counter` increments on
+  steps with price < `substitution_revert_threshold` (default 0.667×
+  initial price), decrements otherwise. Reversion fires when the
+  counter reaches `substitution_revert_trigger_steps` (default 26
+  Li/Ni, 39 Pt — intentionally longer than the forward trigger).
+- **Forward effect**: Manufacturers reduce `mineral_intensity` by
+  `substitution_rate` per cycle (5% Li/Ni, 3% Pt).
+- **Reversion effect**: Manufacturers raise `mineral_intensity` by
+  `substitution_revert_rate` per cycle (3% Li/Ni, 2% Pt — slower
+  than the forward step, capturing the higher cost of switching
+  back to the original chemistry once production is committed).
+- **Bounds**: `substitution_investment` ∈ [0, `max_substitution`]
+  (max 30% Li/Ni, 20% Pt). Reversion stops at 0 (i.e. intensity
+  returns to its original value); forward stops at the cap.
+- **Real-world analog**: LFP took share from NMC during the 2022-23
+  Li price spike; cheap-Li markets see some NMC re-adoption (already
+  visible in 2024 with Li back near $15k/t). Pd-rich autocats have
+  flipped back to Pt-rich and back again multiple times in 2000-2024
+  driven by the Pt/Pd price ratio.
 
 ### Recycling Loop
 - **Product lifetime**: 520 weeks (~10 yr) for Li/Ni EV batteries,
@@ -547,9 +576,9 @@ the IEA NetZero demand trajectory. Numbers regenerated from scratch by
 
 | | Avg price | Volatility | Recycling rate | Substitution | Avg mothballed | Fulfillment |
 |---|---:|---:|---:|---:|---:|---:|
-| Lithium  | $17,337 / t        | ±$2,624     |  6.2% |  0%   | 0 / 30  | 73.5% |
-| Nickel   | $11,412 / t        | ±$2,379     |  5.0% |  0%   | 0 / 29  | 76.5% |
-| Platinum | $35,188,109 / t    | ±$7,072,089 | 20.2% | 20%   | 0 / 18  | 66.8% |
+| Lithium  | $17,338 / t        | ±$2,541     |  6.2% |  0%   | 0 / 30  | 73.3% |
+| Nickel   | $11,519 / t        | ±$2,534     |  5.0% |  0%   | 0 / 29  | 76.4% |
+| Platinum | $35,574,259 / t    | ±$6,399,433 | 20.2% | 18%   | 0 / 18  | 66.6% |
 
 Mothballed counts are out of the per-mineral mine total (Li 30, Ni 29,
 Pt 18 facilities); zero mothballs across the run is the expected
@@ -572,10 +601,13 @@ demand:
   Indonesian oversupply, but with the sustained-pressure mothball
   threshold not quite tripping under these dynamics.
 - **Platinum** is constrained. Capacity grows only 1 %/yr while
-  NetZero fuel-cell + autocat demand grows 2.4×. Avg price $35.2 M/t
-  sustains the 20 % maximum substitution by mid-run as Pt scarcity
-  deepens. Volatility ±$7.1 M/t reflects the small producer base
-  (only 18 mines) and Pt's lower price elasticity.
+  NetZero fuel-cell + autocat demand grows 2.4×. Avg price $35.6 M/t
+  drives substitution to 18 % by mid-run as Pt scarcity deepens
+  (just below the 20 % cap — a couple of post-spike low-price windows
+  trigger small reversions, illustrating the LFP↔NMC-style
+  asymmetric-hysteresis mechanic in action). Volatility ±$6.4 M/t
+  reflects the small producer base (only 18 mines) and Pt's lower
+  price elasticity.
 
 Recycling rates emerge in the second half of the run as the EOL
 stream from the realistic 10–12 yr product-lifetime delay starts to
@@ -618,12 +650,12 @@ embargo duration itself.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Baseline (no embargo)         | $18,348 | — |
-| China only, 1 yr              | $21,576 | +17.6% |
-| Chile only, 1 yr              | $23,086 | +25.8% |
-| Australia only, 1 yr          | $26,393 | +43.9% |
-| **Chile + China, 1 yr**       | **$26,712** | **+45.6%** |
-| **Chile + China + AUS, 5 yr** | **$27,492** | **+49.8%** |
+| Baseline (no embargo)         | $18,823 | — |
+| China only, 1 yr              | $23,111 | +22.8% |
+| Chile only, 1 yr              | $24,684 | +31.1% |
+| Australia only, 1 yr          | $26,753 | +42.1% |
+| **Chile + China, 1 yr**       | **$26,926** | **+43.1%** |
+| **Chile + China + AUS, 5 yr** | **$27,429** | **+45.7%** |
 
 Severity ordering: China alone < Chile alone < Australia alone <
 Chile+China ≈ big-3 5 yr. The big-3 5-year embargo is only marginally
@@ -641,8 +673,8 @@ for the modeled substitution counter to absorb the shock.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Pt baseline             | $30,131,764  | — |
-| Pt SA embargo, 1 yr     | $46,725,778  | +55.1% |
+| Pt baseline             | $30,045,431  | — |
+| Pt SA embargo, 1 yr     | $44,348,097  | +47.6% |
 
 ## Chokepoint-crisis scenarios (seed 42, 8-week closure at step 624)
 
@@ -657,14 +689,14 @@ plus the lead-time tail) vs the no-crisis baseline at the same window:
 
 | Mineral | Chokepoint closed (8 wk) | In-window avg | Δ vs baseline |
 |---------|--------------------------|---------------:|--------------:|
-| Li      | (baseline, no crisis)    | $18,268        | — |
-| Li      | Suez Canal               | $17,811        | -2.5% |
-| Li      | Malacca Strait           | $18,518        | +1.4% |
-| Li      | Strait of Hormuz         | $18,084        | -1.0% |
-| Ni      | (baseline)               | $11,946        | — |
-| Ni      | Malacca Strait           | $11,490        | -3.8% |
-| Pt      | (baseline)               | $33,650,546    | — |
-| Pt      | Suez Canal               | $34,487,434    | +2.5% |
+| Li      | (baseline, no crisis)    | $19,178        | — |
+| Li      | Suez Canal               | $18,855        | -1.7% |
+| Li      | Malacca Strait           | $19,865        | +3.6% |
+| Li      | Strait of Hormuz         | $18,504        | -3.5% |
+| Ni      | (baseline)               | $10,830        | — |
+| Ni      | Malacca Strait           | $11,276        | +4.1% |
+| Pt      | (baseline)               | $24,597,822    | — |
+| Pt      | Suez Canal               | $22,945,243    | -6.7% |
 
 Short 8-week closures produce small, mostly directionally-correct
 impacts now that the supply chain is properly flowing: Malacca Strait
@@ -692,30 +724,25 @@ is the longest event in each scenario. Plots:
 
 | Mineral | Scenario | In-window avg | Δ vs baseline |
 |---------|---------|---------------:|--------------:|
-| Li | asia_crisis_2030       | $22,095        | +14.2% |
-| Li | li_nationalism_2035    | $28,333        | +51.7% |
-| Li | multi_crisis_2040      | $18,133        | +1.0% (Russia/Indo not Li producers) |
-| Ni | asia_crisis_2030       | $13,127        | -1.9% (China is processor, not producer) |
-| Ni | indonesia_squeeze_2032 | $24,431        | +85.0% |
-| Ni | multi_crisis_2040      | $18,735        | +93.9% |
-| Pt | asia_crisis_2030       | $36,906,075    | -12.7% (China embargo doesn't bottle Pt) |
-| Pt | sa_pt_crisis_2030      | $46,398,714    | +9.8% |
-| Pt | multi_crisis_2040      | $31,022,632    | +3.2% |
+| Li | asia_crisis_2030       | $20,729        | +7.8% |
+| Li | li_nationalism_2035    | $28,122        | +50.5% |
+| Li | multi_crisis_2040      | $18,664        | +2.8% (Russia/Indo not Li producers) |
+| Ni | asia_crisis_2030       | $13,489        | +3.3% (China is processor, not producer) |
+| Ni | indonesia_squeeze_2032 | $24,383        | +81.5% |
+| Ni | multi_crisis_2040      | $20,705        | +114.8% |
+| Pt | asia_crisis_2030       | $35,459,939    | +1.1% |
+| Pt | sa_pt_crisis_2030      | $45,727,248    | +30.3% |
+| Pt | multi_crisis_2040      | $34,493,254    | +10.4% |
 
-Indonesia Ni is now the most decisive single-source dependency the
-model captures: `indonesia_squeeze_2032` (+85 %) and
-`multi_crisis_2040` (+94 %) both push Ni dramatically higher. Lithium's
+Indonesia Ni is the most decisive single-source dependency the model
+captures: `indonesia_squeeze_2032` (+81 %) and `multi_crisis_2040`
+(+115 %) both push Ni dramatically higher. Lithium's
 `li_nationalism_2035` (Chile + Australia 2-year embargoes + Suez
-closure) lifts price ~52 % — comparable to the canonical big-3
-embargo. Pt scenarios show smaller deltas because (i) Pt baseline is
-already running well above marginal cost under NetZero demand growth,
-and (ii) the substitution counter is already pinned at the 20 % cap
-from baseline, leaving less headroom for further price escalation.
-The negative deltas (Pt asia_crisis_2030 −12.7 %, Ni asia_crisis_2030
-−1.9 %) reflect that China is a processor / consumer rather than
-producer for those minerals — embargoing China removes *demand* for
-processed material more than it removes supply, depressing the
-in-window price.
+closure) lifts price ~50 % — comparable to the canonical big-3
+embargo. Pt's `sa_pt_crisis_2030` (+30 %) and `multi_crisis_2040`
+(+10 %) reflect Pt's small producer base; the substitution mechanism
+absorbs some of the shock by reducing intensity, dampening the price
+peak relative to a no-substitution counterfactual.
 
 ## Documentation
 
@@ -791,6 +818,13 @@ rail/truck split, ~85 agents over ~26 countries).
 | `transport_lead_time_ship` / `_rail` / `_truck` | 7 / 4 / 2 | Mode-specific shipment delays in steps. |
 | `consumer_product_base_price` | $40k Li/Ni, $30k Pt | Non-mineral component of finished-product price. Consumer elasticity is applied to (base + intensity × mineral_price), not the bare mineral price -- so a 50 % mineral spike adds <1 % to product price for Li/Ni instead of 28 % demand destruction. |
 | `demand_scenario` | `NetZero` | Which scenario column in `data/demand.csv` to interpolate against between the 2024 baseline row and any future-year rows. |
+| `substitution_price_threshold` | 1.5 × initial | Price above which the forward-substitution counter accumulates. |
+| `substitution_trigger_steps` | 10 (12 Pt) | Consecutive (net) high-price steps before substitution fires. |
+| `substitution_rate` | 0.05 (0.03 Pt) | Per-cycle reduction in `mineral_intensity`. |
+| `max_substitution` | 0.30 (0.20 Pt) | Cumulative cap on intensity reduction. |
+| `substitution_revert_threshold` | 0.667 × initial | Price below which the reversion counter accumulates. Default is the symmetric dual of the forward 1.5x threshold (in log-space). |
+| `substitution_revert_trigger_steps` | 26 (39 Pt) | Consecutive (net) low-price steps before reversion fires. Intentionally longer than the forward trigger -- switching back to the original chemistry has higher activation cost than initial adoption. |
+| `substitution_revert_rate` | 0.03 (0.02 Pt) | Per-cycle increase in `mineral_intensity` (slower than `substitution_rate`). Reversion stops at 0 (intensity returns to initial). |
 
 ## Contributing
 

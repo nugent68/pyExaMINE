@@ -5,24 +5,24 @@ Supply Chain Model Summary: Platinum
 Simulation Length: 1352 steps
 
 PRICE DYNAMICS:
-  Average Price: $34,335,091.17/ton
-  Final Price: $30,691,295.93/ton
-  Price Volatility (std): $6,674,579.12
+  Average Price: $35,457,075.59/ton
+  Final Price: $34,969,483.93/ton
+  Price Volatility (std): $6,443,657.73
 
 SUPPLY:
-  Average Mine Output: 4.54 tons/step
-  Average Recycled Supply: 1.27 tons/step
-  Recycling Rate: 21.89%
-  Average Processor Inventory: 9.57 tons
+  Average Mine Output: 4.80 tons/step
+  Average Recycled Supply: 1.26 tons/step
+  Recycling Rate: 20.80%
+  Average Processor Inventory: 9.56 tons
 
 DEMAND:
-  Total Demand: 3,764,871,573.27 product units
-  Fulfillment Rate: 68.09%
+  Total Demand: 3,764,636,411.83 product units
+  Fulfillment Rate: 64.15%
 
 DISRUPTIONS:
-  Average Disrupted Mines: 1.61
+  Average Disrupted Mines: 1.67
   Average Mothballed Mines: 0.00
 
 SUBSTITUTION:
-  Final Mineral Intensity: 0.000002 tons/unit
-  Intensity Reduction: 20.00%
+  Final Mineral Intensity: 0.000003 tons/unit
+  Intensity Reduction: 12.00%

@@ -52,9 +52,25 @@ class ManufacturerAgent(Agent):
             "manufacturer_target_inventory_weeks", 4
         )
 
-        # Substitution tracking
+        # Substitution tracking. Two sticky counters: high_price_counter
+        # accumulates while price > substitution_price_threshold and
+        # decrements on dips/recoveries; low_price_counter accumulates
+        # while price < substitution_revert_threshold and decrements
+        # otherwise. Substitution fires when high_price_counter crosses
+        # substitution_trigger_steps; reversion fires when
+        # low_price_counter crosses substitution_revert_trigger_steps.
+        # Reversion brings substitution_investment back toward 0 (and
+        # mineral_intensity back toward initial), modelling the
+        # real-world fact that cheap-Li markets see LFP cathodes lose
+        # share back to NMC, cheap-Pd markets revert to Pd-rich
+        # autocats, etc. Reversion is intentionally slower (longer
+        # trigger window, smaller per-cycle rate) than forward
+        # substitution to reflect that committing to new chemistry is
+        # cheap relative to switching back once production lines are
+        # built.
         self.substitution_investment = 0.0
         self.high_price_counter = 0
+        self.low_price_counter = 0
 
         # Tracking
         self.produced_this_step = 0
@@ -97,28 +113,53 @@ class ManufacturerAgent(Agent):
         self._produce_goods()
 
     def _check_price_and_substitute(self):
-        """Check if prices are high and invest in substitution.
+        """Check price and update substitution / reversion counters.
 
-        The counter is "sticky": a brief dip in price decrements but does
-        not reset, so substitution is triggered by sustained pressure
-        rather than requiring an unbroken streak. After investment the
-        counter resets, so each substitution increment requires a fresh
-        sustained-pressure window.
+        Two sticky counters operate in opposite price regions:
+        - ``high_price_counter`` increments while price >
+          ``substitution_price_threshold`` and decrements otherwise.
+          Triggers ``_invest_in_substitution`` at
+          ``substitution_trigger_steps``.
+        - ``low_price_counter`` increments while price <
+          ``substitution_revert_threshold`` and decrements otherwise.
+          Triggers ``_revert_substitution`` at
+          ``substitution_revert_trigger_steps`` (typically 2-3x longer
+          than the substitution trigger).
+
+        Both counters are sticky so transient dips/spikes don't trip
+        either action -- only sustained pressure (or sustained relief)
+        does. The two thresholds form a dead zone (default ~0.67x to
+        1.5x of initial price) inside which both counters decay.
         """
-        threshold = self.model.config.get(
+        cfg = self.model.config
+        threshold = cfg.get(
             "substitution_price_threshold",
             self.model.initial_price * 1.5,
         )
-        trigger_steps = self.model.config.get("substitution_trigger_steps", 10)
+        revert_threshold = cfg.get(
+            "substitution_revert_threshold",
+            self.model.initial_price * 0.667,
+        )
+        trigger_steps = cfg.get("substitution_trigger_steps", 10)
+        revert_trigger_steps = cfg.get("substitution_revert_trigger_steps", 26)
 
-        if self.model.current_price > threshold:
+        price = self.model.current_price
+        if price > threshold:
             self.high_price_counter += 1
+            self.low_price_counter = max(0, self.low_price_counter - 1)
+        elif price < revert_threshold:
+            self.low_price_counter += 1
+            self.high_price_counter = max(0, self.high_price_counter - 1)
         else:
             self.high_price_counter = max(0, self.high_price_counter - 1)
+            self.low_price_counter = max(0, self.low_price_counter - 1)
 
         if self.high_price_counter >= trigger_steps:
             self._invest_in_substitution()
             self.high_price_counter = 0
+        elif self.low_price_counter >= revert_trigger_steps:
+            self._revert_substitution()
+            self.low_price_counter = 0
 
     def _invest_in_substitution(self):
         """Invest in R&D to reduce mineral intensity."""
@@ -133,6 +174,28 @@ class ManufacturerAgent(Agent):
             self.mineral_intensity = (
                 self.initial_mineral_intensity * (1 - self.substitution_investment)
             )
+
+    def _revert_substitution(self):
+        """Revert some prior substitution under sustained low prices.
+
+        Once a manufacturer has invested in substitution, sustained
+        low prices on the substituted-from mineral make the original
+        chemistry attractive again (e.g., cheap Li makes NMC
+        competitive vs LFP, cheap Pd makes Pd-rich autocats attractive
+        vs Pt-rich). We reduce ``substitution_investment`` by
+        ``substitution_revert_rate`` (typically smaller than
+        ``substitution_rate``) and recompute intensity. Cannot revert
+        below 0, and a no-op when no substitution has happened yet.
+        """
+        if self.substitution_investment <= 0:
+            return
+        revert_rate = self.model.config.get("substitution_revert_rate", 0.03)
+        self.substitution_investment = max(
+            0.0, self.substitution_investment - revert_rate,
+        )
+        self.mineral_intensity = (
+            self.initial_mineral_intensity * (1 - self.substitution_investment)
+        )
 
     def _order_minerals(self):
         """Order minerals from processors if inventory is low.

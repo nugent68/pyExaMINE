@@ -64,11 +64,20 @@ PLATINUM_CONFIG = {
     "geopolitical_duration_min": 5,
     "geopolitical_duration_max": 15,
     
-    # Manufacturer substitution (less substitution for platinum due to unique properties)
-    "substitution_price_threshold": 45000000,  # 150% of initial price
-    "substitution_trigger_steps": 12,           # Longer trigger (harder to substitute)
-    "substitution_rate": 0.03,                  # 3% reduction per cycle (slower)
-    "max_substitution": 0.20,                   # Max 20% reduction (less flexible)
+    # Manufacturer substitution (less substitution for platinum due to
+    # unique properties). Forward fires on sustained high prices
+    # (autocat thrifting + Pt -> Pd swap); reversion fires on sustained
+    # low prices (Pd-rich -> back to Pt-rich when relative pricing
+    # reverses, as has happened multiple times in 2000-2024). Reversion
+    # is much slower than for Li/Ni because PGM autocat washcoat
+    # tooling has long requalification cycles.
+    "substitution_price_threshold": 45000000,        # 150% of initial $30M
+    "substitution_revert_threshold": 20000000,       # 66.7% of initial
+    "substitution_trigger_steps": 12,                # Longer trigger (harder to substitute)
+    "substitution_revert_trigger_steps": 39,         # ~9 months of below-revert pricing
+    "substitution_rate": 0.03,                       # 3%/cycle (slower)
+    "substitution_revert_rate": 0.02,                # 2%/cycle reversion (even slower)
+    "max_substitution": 0.20,                        # Max 20% reduction (less flexible)
     
     # Consumer behavior (less price-sensitive due to no alternatives)
     "consumer_price_sensitivity": -0.5,

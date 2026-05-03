@@ -68,11 +68,19 @@ LITHIUM_CONFIG = {
     "geopolitical_duration_min": 5,
     "geopolitical_duration_max": 15,
     
-    # Manufacturer substitution
-    "substitution_price_threshold": 25500,  # 150% of initial price
-    "substitution_trigger_steps": 10,        # Consecutive high-price steps
-    "substitution_rate": 0.05,               # 5% reduction per cycle
-    "max_substitution": 0.30,                # Max 30% reduction
+    # Manufacturer substitution.
+    # Forward (intensity-down) when price stays high. Reverse
+    # (intensity-back-up) when price stays low for a longer window:
+    # historically LFP took share from NMC during the 2022-23 Li spike,
+    # and crash-back-to-cheap-Li would restore some NMC share over
+    # multiple years. Reversion is intentionally slower than adoption.
+    "substitution_price_threshold": 25500,           # 150% of initial price
+    "substitution_revert_threshold": 11333,          # 66.7% of initial; LFP/NMC cell-cost crossover ~$10k
+    "substitution_trigger_steps": 10,                # Consecutive high-price steps
+    "substitution_revert_trigger_steps": 26,         # ~6 months of below-revert pricing
+    "substitution_rate": 0.05,                       # 5% reduction per cycle
+    "substitution_revert_rate": 0.03,                # 3%/cycle re-adoption (slower than going to LFP)
+    "max_substitution": 0.30,                        # Max 30% reduction
     
     # Consumer behavior
     "consumer_price_sensitivity": -0.8,      # Demand elasticity (vs product price)

@@ -64,10 +64,17 @@ NICKEL_CONFIG = {
     "geopolitical_duration_min": 5,
     "geopolitical_duration_max": 15,
     
-    # Manufacturer substitution
-    "substitution_price_threshold": 27000,  # 150% of initial price
+    # Manufacturer substitution. Forward fires on sustained high
+    # prices (NMC -> LFP shift); reversion fires on sustained low
+    # prices (LFP -> back to NMC, or low-Co NMC chemistries reverting).
+    # Reversion threshold uses 0.667x initial as the symmetric dual of
+    # the 1.5x forward trigger.
+    "substitution_price_threshold": 27000,           # 150% of initial $18000
+    "substitution_revert_threshold": 12000,          # 66.7% of initial
     "substitution_trigger_steps": 10,
+    "substitution_revert_trigger_steps": 26,         # ~6 months of below-revert pricing
     "substitution_rate": 0.05,
+    "substitution_revert_rate": 0.03,
     "max_substitution": 0.30,
     
     # Consumer behavior
