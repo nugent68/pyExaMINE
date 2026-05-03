@@ -24,40 +24,30 @@ NICKEL_CONFIG = {
     "price_ceiling_mc_multiple": 8.0,
     "price_floor_cost_fraction": 0.6,
     
-    # Agent counts
-    "n_mines": "auto",        # Derived from USGS data
-    "n_processors": 5,
-    "n_manufacturers": 10,
-    "n_retailers": 15,
-    "n_consumers": 120,
-    "n_recyclers": 4,
-    "n_transport": 12,
-    
-    # Production parameters
-    "avg_ore_grade": 0.65,    # Lower than Lithium
-    "processor_conversion_efficiency": 0.75,
-    "manufacturer_mineral_intensity": 0.04,  # tons Ni per EV
-    
-    # Economic parameters
-    "base_extraction_cost": 9000,     # $/ton base cost
-    "processor_energy_cost": 2000,    # $/ton processing
-    "transport_cost_ship": 12,        # $/ton
-    "transport_cost_rail": 28,        # $/ton
-    "transport_cost_truck": 55,       # $/ton
-    
-    # Lead times (steps)
-    "transport_lead_time_ship": 6,
-    "transport_lead_time_rail": 4,
-    "transport_lead_time_truck": 2,
-    
-    # Recycling parameters (higher for established nickel recycling)
-    "collection_rate": 0.60,           # 60% of EOL collected
-    "recovery_efficiency": 0.75,       # 75% recovered from collected
-    "recycling_processing_cost": 4500, # $/ton
+    # Manufacturer mineral intensity (tons Ni per EV).
+    "manufacturer_mineral_intensity": 0.04,
+
+    # Per-mode transport unit costs ($/ton; diagnostics only).
+    # Mine / processor / recycler parameters live in the per-facility
+    # CSVs (data/nickel_*.csv).
+    "transport_cost_ship": 12,
+    "transport_cost_rail": 28,
+    "transport_cost_truck": 55,
+
+    # Recycling collection rate (aggregate share of available EOL
+    # picked up per step; per-facility recovery efficiency / processing
+    # cost are in data/nickel_recyclers.csv).
+    "collection_rate": 0.60,
     "product_lifetime_steps": 520,    # ~10 years (EV battery mix; stainless 20-30y)
     
     # Market parameters
     "geopolitical_event_probability": 0.01,
+    # Probability that a geopolitical event hits the refining tier
+    # rather than the mining tier. Ni refining is unusually
+    # concentrated (Indonesian RKEF, Chinese HPAL); a higher share
+    # would be defensible for Ni specifically, but 0.30 keeps the
+    # cross-mineral comparison consistent.
+    "geopolitical_processor_event_share": 0.30,
     "mine_disruption_probability": 0.02,
     "disruption_duration_min": 3,
     "disruption_duration_max": 5,
@@ -85,12 +75,10 @@ NICKEL_CONFIG = {
     # price ~$40k pre-battery mineral content.
     "consumer_product_base_price": 40000,
     
-    # Retailer inventory policy. Multipliers in weeks of *current*
-    # per-step demand (the policy scales with demand-growth factor).
-    # Reorder point covers ~3 wk ship lead time + 1 wk safety stock.
+    # Retailer inventory policy. (s, Q) thresholds in weeks of the
+    # demand-EWMA; ~3 wk ship lead time + 1 wk safety stock.
     "retailer_reorder_point_multiplier": 4.0,
     "retailer_order_quantity_multiplier": 3.0,
-    "retailer_lead_time": 3,
     
     # Manufacturer inventory
     "manufacturer_target_inventory_weeks": 4,

@@ -28,40 +28,35 @@ LITHIUM_CONFIG = {
     "price_ceiling_mc_multiple": 8.0,    # soft ceiling = N x marginal cost
     "price_floor_cost_fraction": 0.6,    # soft floor = f x cheapest cost
     
-    # Agent counts
-    "n_mines": "auto",        # Derived from USGS data
-    "n_processors": 5,
-    "n_manufacturers": 8,
-    "n_retailers": 12,
-    "n_consumers": 100,
-    "n_recyclers": 3,
-    "n_transport": 10,
-    
-    # Production parameters
-    "avg_ore_grade": 0.85,
-    "processor_conversion_efficiency": 0.80,
-    "manufacturer_mineral_intensity": 0.008,  # tons Li per EV (~8 kg, 60-80 kWh NMC pack)
-    
-    # Economic parameters
-    "base_extraction_cost": 8000,     # $/ton base cost
-    "processor_energy_cost": 1500,    # $/ton processing
-    "transport_cost_ship": 10,         # $/ton
-    "transport_cost_rail": 25,         # $/ton
-    "transport_cost_truck": 50,        # $/ton
-    
-    # Lead times (steps)
-    "transport_lead_time_ship": 7,
-    "transport_lead_time_rail": 4,
-    "transport_lead_time_truck": 2,
-    
-    # Recycling parameters
-    "collection_rate": 0.30,           # 30% of EOL collected
-    "recovery_efficiency": 0.70,       # 70% recovered from collected
-    "recycling_processing_cost": 5000, # $/ton
+    # Manufacturer mineral intensity (tons Li per EV; ~8 kg / 60-80
+    # kWh NMC pack). Used at construction to size the manufacturer
+    # capacity headroom and the EOL deposit / recycling baseline.
+    "manufacturer_mineral_intensity": 0.008,
+
+    # Per-mode transport unit costs ($/ton; used by transport agent
+    # cost field for diagnostics). Mine / processor / recycler / route
+    # parameters all live in the per-facility CSVs (data/lithium_*.csv)
+    # and the global route table (src/data/routing.py); only knobs
+    # that aren't per-facility are tracked here.
+    "transport_cost_ship": 10,
+    "transport_cost_rail": 25,
+    "transport_cost_truck": 50,
+
+    # Recycling collection rate (aggregate share of available EOL
+    # picked up by recyclers per step; per-facility recovery efficiency
+    # / processing cost are in data/lithium_recyclers.csv).
+    "collection_rate": 0.30,
     "product_lifetime_steps": 520,    # ~10 years for EV batteries (8-15y typical)
     
     # Market parameters
     "geopolitical_event_probability": 0.01,  # 1% per step
+    # Probability that a geopolitical event hits the refining tier
+    # rather than the mining tier. Real-world refinery outages
+    # (Indonesian smelters, Chinese power curtailments, sanctioned
+    # operators) are less common than mining incidents but still
+    # significant; 0.30 reflects roughly the 1:2 ratio of refinery to
+    # mine disruption events in 2010-24 industry data.
+    "geopolitical_processor_event_share": 0.30,
     "mine_disruption_probability": 0.02,      # 2% per step
     "disruption_duration_min": 3,
     "disruption_duration_max": 5,
@@ -91,15 +86,12 @@ LITHIUM_CONFIG = {
     # (mineral + base) rather than the bare mineral price.
     "consumer_product_base_price": 40000,
     
-    # Retailer inventory policy. The (s, Q) policy now scales with the
-    # demand-trajectory growth factor, so multipliers are interpreted in
-    # weeks of *current* per-step demand. Reorder point covers the ship
-    # lead time (~3 wk China->everywhere) plus 1 wk of safety stock so
-    # the retailer doesn't stock out between order placement and
-    # shipment arrival.
-    "retailer_reorder_point_multiplier": 4.0,  # weeks of current demand
+    # Retailer inventory policy. (s, Q) thresholds are expressed in
+    # weeks of the EWMA of realised consumer demand (see
+    # RetailerAgent.demand_ewma); multiplier 4.0 covers ~3 wk of
+    # ship lead time plus a week of safety stock.
+    "retailer_reorder_point_multiplier": 4.0,
     "retailer_order_quantity_multiplier": 3.0,
-    "retailer_lead_time": 3,
     
     # Manufacturer inventory
     "manufacturer_target_inventory_weeks": 4,

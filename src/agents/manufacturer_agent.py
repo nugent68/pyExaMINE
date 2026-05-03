@@ -202,11 +202,19 @@ class ManufacturerAgent(Agent):
 
         target_inventory and input_inventory are both in mineral tonnes.
         Order up to a fraction of the gap each step to smooth flow.
-        Ordered material is dispatched via a TransportAgent (mode='rail'
-        for the processor -> manufacturer leg) and only lands in
-        input_inventory when the shipment arrives, so on-order quantities
-        are tracked against the gap to avoid over-ordering during the
-        transit window.
+        Ordered material is dispatched via a TransportAgent; the
+        transport mode is determined by the route table (typically
+        ship for cross-region, rail for overland Asia <-> Europe), not
+        by the manufacturer. Only lands in input_inventory when the
+        shipment arrives, so on-order quantities are tracked against
+        the gap to avoid over-ordering during the transit window.
+
+        Processor ordering is shuffled each step so no single processor
+        is systematically front-of-queue. Without the shuffle the first
+        processor in CSV order absorbed every manufacturer's order
+        first while later processors (especially smaller / further-
+        listed ones) sat idle. Shuffling balances utilisation across
+        the processor pool without affecting aggregate dynamics.
         """
         in_transit = sum(s['quantity'] for s in self._pending_inbound_processed())
         effective_inventory = self.input_inventory + in_transit
@@ -217,7 +225,10 @@ class ManufacturerAgent(Agent):
         order_rate = self.model.config.get("manufacturer_order_rate", 0.5)
         order_amount = minerals_needed * order_rate
 
-        for processor in self.model.processors:
+        processors = list(self.model.processors)
+        self.model.random_state.shuffle(processors)
+
+        for processor in processors:
             if order_amount <= 0:
                 break
 

@@ -19,45 +19,34 @@ PLATINUM_CONFIG = {
     "price_ceiling_mc_multiple": 8.0,
     "price_floor_cost_fraction": 0.6,
     
-    # Agent counts (fewer due to concentrated production)
-    "n_mines": "auto",        # Derived from USGS data (very few producers)
-    "n_processors": 3,
-    "n_manufacturers": 6,
-    "n_retailers": 8,
-    "n_consumers": 80,
-    "n_recyclers": 2,
-    "n_transport": 8,
-    
     # Fallback annual mineral demand (tonnes/year) used only if USGS_CMM.csv
     # has no Platinum_Global_Demand_2024 column. Real global Pt demand is
     # ~250 t/yr (autocatalysts, jewelry, fuel cells).
     "default_annual_demand_tons": 250.0,
 
-    # Production parameters (precious metal characteristics)
-    "avg_ore_grade": 0.55,     # Very low grade ore
-    "processor_conversion_efficiency": 0.70,
-    "manufacturer_mineral_intensity": 0.000003,  # ~3 g Pt per autocatalyst (1-7 g PGM typical)
-    
-    # Economic parameters (high costs for precious metals)
-    "base_extraction_cost": 15000000,  # $/ton base cost
-    "processor_energy_cost": 5000000,  # $/ton processing
-    "transport_cost_ship": 5000,       # $/ton (high value = high security)
-    "transport_cost_rail": 8000,       # $/ton
-    "transport_cost_truck": 12000,     # $/ton
-    
-    # Lead times (steps)
-    "transport_lead_time_ship": 5,
-    "transport_lead_time_rail": 3,
-    "transport_lead_time_truck": 1,
-    
-    # Recycling parameters (very high for precious metals)
-    "collection_rate": 0.75,            # 75% of EOL collected
-    "recovery_efficiency": 0.85,        # 85% recovered from collected
-    "recycling_processing_cost": 8000000,  # $/ton
+    # Manufacturer mineral intensity (~3 g Pt per autocat; 1-7 g PGM typical).
+    "manufacturer_mineral_intensity": 0.000003,
+
+    # Per-mode transport unit costs ($/ton; precious-metal cargo so
+    # security premium is high). Mine / processor / recycler parameters
+    # live in the per-facility CSVs (data/platinum_*.csv).
+    "transport_cost_ship": 5000,
+    "transport_cost_rail": 8000,
+    "transport_cost_truck": 12000,
+
+    # Recycling collection rate (autocat scrap is the most-recycled
+    # commodity stream globally; per-facility recovery efficiency /
+    # processing cost are in data/platinum_recyclers.csv).
+    "collection_rate": 0.75,
     "product_lifetime_steps": 624,    # ~12 years for autocatalysts (10-15y typical)
     
     # Market parameters
     "geopolitical_event_probability": 0.01,
+    # Probability that a geopolitical event hits the refining tier
+    # (PGM smelter / refinery) rather than the mining tier. Anglo
+    # American Platinum smelter outages are a real-world precedent
+    # (e.g., 2020 ACP Phase A converter explosion).
+    "geopolitical_processor_event_share": 0.30,
     "mine_disruption_probability": 0.02,
     "disruption_duration_min": 3,
     "disruption_duration_max": 5,
@@ -88,15 +77,13 @@ PLATINUM_CONFIG = {
     # mineral cost in the consumer-facing good.
     "consumer_product_base_price": 30000,
     
-    # Retailer inventory policy. Multipliers in weeks of *current*
-    # per-step demand (the policy scales with demand-growth factor).
-    # Pt uses a slightly larger reorder point + order quantity than
-    # Li/Ni to reflect the higher transport security cost (high-value
-    # cargo) -- carrying a few extra weeks of buffer is cheap relative
-    # to insuring extra shipments.
+    # Retailer inventory policy. (s, Q) thresholds in weeks of the
+    # demand-EWMA. Pt uses a slightly larger reorder point + order
+    # quantity than Li/Ni to reflect the higher transport security
+    # cost (high-value cargo) -- carrying a few extra weeks of buffer
+    # is cheap relative to insuring extra shipments.
     "retailer_reorder_point_multiplier": 5.0,
     "retailer_order_quantity_multiplier": 3.5,
-    "retailer_lead_time": 4,
     
     # Manufacturer inventory
     "manufacturer_target_inventory_weeks": 6,  # Longer due to supply concentration

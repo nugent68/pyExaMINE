@@ -624,22 +624,57 @@ class MineralSupplyChainModel(Model):
         return jurisdiction in self.active_embargoes
 
     def _trigger_geopolitical_event(self):
-        jurisdictions = list({mine.jurisdiction for mine in self.mines})
-        if not jurisdictions:
+        """Pick a country and a tier (mining or refining) to disrupt.
+
+        ``geopolitical_processor_event_share`` (default 0.30) is the
+        probability that a given event hits the refining tier instead
+        of the mining tier. Real-world precedent: Indonesian smelter
+        outages, Chinese power-curtailment-driven refinery shutdowns,
+        sanctions on specific operators (Norilsk PGM smelter). The
+        old behavior only disrupted mines, so any scenario built on
+        refinery-side risk was un-modellable.
+        """
+        mine_jurisdictions = {mine.jurisdiction for mine in self.mines}
+        processor_jurisdictions = {p.country for p in self.processors}
+        if not mine_jurisdictions and not processor_jurisdictions:
             return
+
+        proc_share = float(self.config.get("geopolitical_processor_event_share", 0.30))
+        # Roll the tier first; if the chosen tier has no jurisdictions,
+        # fall back to the other so an event always lands somewhere.
+        roll = self.random_state.random()
+        target_tier = 'processor' if (roll < proc_share and processor_jurisdictions) else 'mine'
+        if target_tier == 'mine' and not mine_jurisdictions:
+            target_tier = 'processor'
+
+        if target_tier == 'processor':
+            jurisdictions = sorted(processor_jurisdictions)
+        else:
+            jurisdictions = sorted(mine_jurisdictions)
+
         affected = select_affected_jurisdiction(jurisdictions, self.random_state)
         min_dur = self.config.get("geopolitical_duration_min", 5)
         max_dur = self.config.get("geopolitical_duration_max", 15)
         duration = calculate_disruption_duration(min_dur, max_dur, self.random_state)
 
         self.active_disruptions[affected] = duration
-        for mine in self.mines:
-            if mine.jurisdiction == affected:
-                mine.apply_geopolitical_disruption(duration)
+        if target_tier == 'mine':
+            for mine in self.mines:
+                if mine.jurisdiction == affected:
+                    mine.apply_geopolitical_disruption(duration)
+        else:
+            for processor in self.processors:
+                if processor.country == affected:
+                    processor.apply_geopolitical_disruption(duration)
+        # Transport in/out of the affected country is disrupted in both
+        # cases -- the corridor itself is what's affected (border
+        # closures, port shutdowns, sanctioned shipping).
         for transport in self.transport_agents:
             transport.apply_disruption(affected, duration)
 
-        print(f"Geopolitical event! {affected} disrupted for {duration} steps")
+        tier_label = 'refining' if target_tier == 'processor' else 'mining'
+        print(f"Geopolitical event! {affected} ({tier_label}) "
+              f"disrupted for {duration} steps")
 
     def _update_price(self):
         # Supply signal: mineral that has actually *landed* in the post-
@@ -873,6 +908,7 @@ class MineralSupplyChainModel(Model):
                 "Cumulative_Reserve_Replacement": lambda m: m.cumulative_reserve_replacement,
                 "Mass_Balance_Discrepancy": lambda m: m.mass_balance_discrepancy(),
                 "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if a.disruption_counter > 0),
+                "Disrupted_Processors_Count": lambda m: sum(1 for a in m.processors if a.disruption_counter > 0),
                 "Mothballed_Mines_Count": lambda m: sum(1 for a in m.mines if a.mothballed),
                 "Total_Consumer_Demand_Units": lambda m: sum(a.current_demand for a in m.consumers),
                 "Fulfilled_Demand_Units": lambda m: sum(a.fulfilled_demand for a in m.consumers),

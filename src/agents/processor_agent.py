@@ -71,12 +71,29 @@ class ProcessorAgent(Agent):
         self.sold_this_step = 0
         self.recycled_received_this_step = 0
 
+        # Geopolitical-disruption state. >0 means the processor is
+        # off-line for the remaining number of steps (smelter outage,
+        # power curtailment, sanctions on the operator, etc.). While
+        # disrupted: no purchasing, no processing, no selling. Inbound
+        # shipments still arrive (ore can stockpile at the gate); only
+        # the facility's own actions stop.
+        self.disruption_counter = 0
+
     def step(self):
         """Execute one time step of processor behavior."""
         self.processed_this_step = 0
         self.purchased_this_step = 0
         self.sold_this_step = 0
         self.recycled_received_this_step = 0
+
+        # Tick down any active disruption. While disrupted, the
+        # facility takes no action (no purchasing, no processing).
+        # Inbound shipments still arrive via receive_shipment -- ore
+        # stockpiles at the gate, matching real-world smelter outages
+        # where offtake contracts continue but throughput halts.
+        if self.disruption_counter > 0:
+            self.disruption_counter -= 1
+            return
 
         # 0. Capacity expansion. Mines and manufacturers already grow
         #    with the demand curve; without symmetric processor growth a
@@ -105,11 +122,12 @@ class ProcessorAgent(Agent):
     def _purchase_ore(self):
         """Purchase ore from available mines, cheapest first.
 
-        Purchased ore is dispatched to a transport agent (mode='ship'
-        for the long-haul mine -> processor leg) and only lands in
-        raw_ore_buffer when the shipment arrives. This means
-        in_transit_ore + raw_ore_buffer is the relevant "pipeline"
-        quantity for capacity planning, not raw_ore_buffer alone.
+        Purchased ore is dispatched to a transport agent (the route
+        table picks the mode -- typically ship for cross-region, rail
+        for overland Asia <-> Europe) and only lands in raw_ore_buffer
+        when the shipment arrives. This means in_transit_ore +
+        raw_ore_buffer is the relevant "pipeline" quantity for capacity
+        planning, not raw_ore_buffer alone.
         """
         mines = self.model.mines
         if not mines:
@@ -288,6 +306,20 @@ class ProcessorAgent(Agent):
             amount: Amount requested
 
         Returns:
-            Amount that can be fulfilled
+            Amount that can be fulfilled. Disrupted processors return
+            0 -- offtake stops alongside processing during an outage.
         """
+        if self.disruption_counter > 0:
+            return 0
         return self.sell_inventory(amount)
+
+    def apply_geopolitical_disruption(self, duration):
+        """Apply a geopolitical disruption to this processor.
+
+        Uses ``max(...)`` so a stacked event (e.g. embargo on the host
+        country plus a smelter-specific incident) doesn't shorten the
+        longer outage window.
+        """
+        if duration <= 0:
+            return
+        self.disruption_counter = max(self.disruption_counter, int(duration))
