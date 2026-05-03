@@ -1,0 +1,15 @@
+[project]
+name = "pyexamine"
+version = "0.1.0"
+description = "Agent-based model of critical minerals supply chains"
+authors = [
+    { name = "Peter Nugent", email = "nugent68@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.7",
+    "mesa>=2.4,<3",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "seaborn>=0.13",
+]

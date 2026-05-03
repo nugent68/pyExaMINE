@@ -34,15 +34,29 @@ Country-level coverage focuses on the relevant producers for each mineral
 - Calibrated extraction costs and ore grades per country.
 
 ### 🤖 7 Agent Types
-- **MineAgent** - Extracts raw minerals, subject to disruptions and embargoes
-- **ProcessorAgent** - Converts ore to processed material
-- **TransportAgent** - Moves materials with realistic delays
-- **ManufacturerAgent** - Produces goods, invests in substitution
-- **RetailerAgent** - Manages inventory with (s,Q) policy
-- **ConsumerAgent** - Generates price-sensitive demand
-- **RecyclingAgent** - Recovers minerals from end-of-life products
+- **MineAgent** - Extracts raw minerals; mothballs when price < extraction
+  cost and reopens above `extraction_cost * mine_restart_margin`. Subject
+  to random disruptions, geopolitical events, and embargoes.
+- **ProcessorAgent** - Converts ore to processed material; receives
+  recycled mineral via a dedicated channel that bypasses the conversion
+  stage (recycled material is already in pure-mineral form).
+- **TransportAgent** - Moves materials with realistic delays.
+- **ManufacturerAgent** - Produces goods, invests in substitution. Target
+  input inventory is correctly sized in mineral tonnes (not product units).
+- **RetailerAgent** - Manages inventory with (s,Q) policy and a multi-order
+  pipeline (up to `retailer_max_pending_orders` outstanding).
+- **ConsumerAgent** - Generates price-sensitive demand and shops retailers
+  in randomized order each step (no first-retailer monopoly).
+- **RecyclingAgent** - Recovers minerals from end-of-life products,
+  claiming a fair share of each step's initial EOL bucket.
 
 ### 📊 Dynamic Mechanisms
+- **Tier-Ordered Scheduling** - Within each step, agents are activated in
+  supply-chain order: mines → recyclers → processors → manufacturers →
+  retailers → consumers → transport. Within each tier the activation
+  order is shuffled (using the seeded RNG) for fairness. This replaces
+  the previous fully-random activation, which routinely hid an upstream
+  agent's fresh production from a downstream agent that activated first.
 - **Market Pricing** - Flow-based signal: smoothed (supply / demand) ratio over
   a rolling window (default 8 steps) drives ±5% price moves; ratio < 0.95 →
   shortage → price up, ratio > 1.10 → surplus → price down.
@@ -53,8 +67,16 @@ Country-level coverage focuses on the relevant producers for each mineral
   duration. Mines keep extracting; production accumulates in a domestic
   stockpile rather than reaching foreign processors.
 - **Material Substitution** - Manufacturers reduce mineral intensity under
-  sustained high prices.
-- **Circular Economy** - Recycling loop with a 25-step product-lifetime lag.
+  sustained high prices. The trigger counter is "sticky": brief dips
+  decrement rather than reset, so substitution responds to sustained
+  pressure rather than requiring an unbroken streak.
+- **Circular Economy** - Recycling loop with a 25-step product-lifetime
+  lag. Each step's EOL bucket is snapshotted before any recycler runs,
+  so multiple recyclers split it fairly (no compounding shortfall from
+  sequential collection on the same shrinking pot).
+- **Reproducibility** - All randomness in the model (mine disruptions,
+  geopolitical events, agent shuffling, consumer retailer choice) flows
+  through a single seeded `random.Random` instance.
 
 ### 📈 Comprehensive Outputs
 - 6-panel visualization dashboard per mineral
@@ -68,7 +90,9 @@ pyExaMINE/
 ├── README.md                          # This file
 ├── INSTALL.md                         # Detailed install / uv guide
 ├── USGS_CMM.csv                       # Source data (Li/Ni/Pt, unit-tagged headers)
-├── requirements.txt                   # Python dependencies
+├── pyproject.toml                     # Project metadata + dependency declarations (uv)
+├── uv.lock                            # Pinned dependency graph (committed)
+├── requirements.txt                   # Legacy mirror for non-uv users
 ├── plans/                             # Architecture documentation
 │   ├── architecture_plan.md
 │   ├── quick_reference.md
@@ -106,8 +130,10 @@ pyExaMINE/
 ## Installation
 
 pyExaMINE uses [uv](https://docs.astral.sh/uv/) to manage its Python
-environment. `uv run` executes the simulation in the project's `.venv/`
-without requiring you to activate it manually.
+environment. The project ships with a `pyproject.toml` and a committed
+`uv.lock`, so a single `uv sync` reproduces the exact dependency graph
+across machines. `uv run` then executes the simulation in the
+project's `.venv/` without requiring you to activate it manually.
 
 ```bash
 # Clone the repository
@@ -119,13 +145,13 @@ brew install uv
 # or, on any platform:
 # curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Create the project environment and install dependencies
-uv venv
-uv pip install -r requirements.txt
+# Create the venv and install the locked dependency set
+uv sync
 ```
 
 See [INSTALL.md](INSTALL.md) for the legacy `python -m venv venv` path
-if you cannot use uv.
+(uses `requirements.txt`, kept in sync with `pyproject.toml`) if you
+cannot use uv.
 
 **Requirements:**
 - uv (installs Python interpreter on demand)
@@ -249,7 +275,9 @@ Tunable knobs (per-config): `price_signal_window_steps`,
   CSV time-series output).
 
 ### Material Substitution
-- **Trigger**: Price above threshold for 10+ consecutive steps
+- **Trigger**: Sticky counter — increments on high-price steps,
+  decrements (but does not reset) on dips. Investment fires once the
+  counter reaches `substitution_trigger_steps` (default 10), then resets.
 - **Effect**: Manufacturers reduce `mineral_intensity` by 5% per cycle
 - **Max reduction**: 30% (Li/Ni), 20% (Pt)
 - **Irreversible**: Once invested, intensity stays reduced
@@ -260,25 +288,56 @@ Tunable knobs (per-config): `price_signal_window_steps`,
 - **Recovery efficiency**: 70–85% of collected material
 - **Profitability gate**: Only process if market price > processing cost
 
-## Validation (canonical 2050 baseline, seed 42)
+## Validation (canonical 1248-step baseline, seed 42)
 
-| | Avg price | Avg recycling | Substitution | Reserves drawdown over 24 yr |
-|---|---|---|---|---|
-| Lithium  | $17,431/t   | 13% | 0%  | ≈ 9%  |
-| Nickel   | $15,999/t   | 23% | 5%  | ≈ 60% |
-| Platinum | $29,420,000/t | 34% | 6%  | ≈ 11% |
+24 weekly years of simulation per mineral, run on the bug-fixed model
+(see commit history for the full set of correctness fixes). Numbers
+regenerated from scratch and committed under `outputs/`.
 
-- Prices cluster around their initial values (no ceiling/floor pinning).
-- Recycling contributions track the configured collection × recovery rates.
-- Reserves drawdowns match supply/demand expectations through 2050.
+| | Avg price | Volatility | Recycling rate | Substitution | Avg mothballed |
+|---|---:|---:|---:|---:|---:|
+| Lithium  | $13,576 / t       | ±$2,058     | 12.4% | 0%    | 1.95 / 10 |
+| Nickel   | $14,490 / t       | ±$2,651     | 27.2% | 0%    | 1.81 / 12 |
+| Platinum | $25,927,101 / t   | ±$7,072,502 | 39.1% | 6%    | 0.00 / 6  |
 
-## Example: political-embargo response (Lithium)
+Recycling rates are below the per-mineral EOL recovery cap
+(`collection_rate × recovery_efficiency` = 21% / 45% / 64%) because of
+the 25-step product-lifetime lag and the recycler's profitability gate.
+Lithium and Nickel never trip substitution at baseline because prices
+oscillate around the initial level rather than spiking. Platinum's
+high price-cost margin keeps every mine operational throughout
+(0 mothballed) but does see modest substitution on price volatility.
 
-| Scenario | Avg price during embargo | Recovery |
-|---|---|---|
-| Baseline (no embargo) | $17,431/t | — |
-| Chile + China, 1 year | $30,718/t (+85%) | back to ~$19K within ~1 yr |
-| Chile + China + Australia, 5 years | ~$31,000/t sustained | back to ~$19.5K within ~1 yr |
+## Political-embargo scenarios (Lithium, seed 42)
+
+`--embargo` flags re-route affected mine output into
+`MineAgent.domestic_stockpile` for the configured duration. The price
+signal reflects the loss because `supply_flow` excludes embargoed
+production. All scenarios below run for 1248 steps with the embargo
+firing at step 624.
+
+| Scenario | In-window avg ($/t) | Δ vs baseline |
+|----------|--------------------:|--------------:|
+| Baseline (no embargo)         | $14,225 | — |
+| Chile only, 1 yr              | $14,594 | +2.6% |
+| China only, 1 yr              | $14,975 | +5.3% |
+| **Australia only, 1 yr**      | **$16,252** | **+14.2%** |
+| Chile + China, 1 yr           | $15,139 | +6.4% |
+| **Chile + China + AUS, 5 yr** | **$29,070** | **+104.4%** |
+
+Single-country embargoes do not trigger substitution (price spike
+isn't sustained long enough to cross the 10-step counter). The 5-year
+big-3 embargo accumulates pressure over the full window and pushes
+manufacturers to the **30% maximum substitution**.
+
+For Platinum, a 1-year South Africa embargo (~72% of global Pt
+production) more than doubles the in-window price ($25.99 M → $57.64 M,
++121.7%) and triggers 18% substitution.
+
+| Scenario | In-window avg ($/t) | Δ vs baseline |
+|----------|--------------------:|--------------:|
+| Pt baseline             | $25,994,094 | — |
+| **Pt SA embargo, 1 yr** | **$57,641,222** | **+121.7%** |
 
 Visualization: [`outputs/embargo_comparison.png`](outputs/embargo_comparison.png).
 
@@ -293,10 +352,23 @@ Visualization: [`outputs/embargo_comparison.png`](outputs/embargo_comparison.png
 | Parameter | Lithium | Nickel | Platinum |
 |-----------|---------|--------|----------|
 | Initial Price ($/ton) | 17,000 | 18,000 | 30,000,000 |
-| Ore Grade | 0.85 | 0.65 | 0.55 |
+| Ore Grade (metadata)  | 0.85 | 0.65 | 0.55 |
 | Conversion Efficiency | 0.80 | 0.75 | 0.70 |
 | Collection Rate | 0.30 | 0.60 | 0.75 |
 | Recovery Efficiency | 0.70 | 0.75 | 0.85 |
+
+### Tunable knobs (with sensible defaults)
+
+| Knob | Default | Effect |
+|------|---------|--------|
+| `mine_restart_margin` | 1.2 | A mothballed mine reopens when price > extraction_cost × this. |
+| `processor_safety_stock_weeks` | 2.0 | Buffer (in weeks of *output* capacity) below which a processor won't sell. |
+| `manufacturer_target_inventory_weeks` | 4 | Manufacturer's target input buffer in weeks of full-capacity production. |
+| `manufacturer_order_rate` | 0.5 | Per-step fraction of the target gap a manufacturer orders. |
+| `manufacturer_capacity_headroom` | 1.5 | Aggregate manufacturer capacity vs. baseline product demand. |
+| `retailer_max_pending_orders` | 3 | Max simultaneous outstanding orders per retailer. |
+| `price_signal_window_steps` | 8 | Smoothing window for the supply/demand price signal. |
+| `price_shortage_ratio` / `price_surplus_ratio` | 0.95 / 1.10 | Bands within which price is held flat. |
 
 ## Contributing
 
@@ -343,7 +415,9 @@ If you use this model in your research, please cite:
 
 ---
 
-**Status**: ✅ Implemented and validated end-to-end. Lithium, Nickel, and
-Platinum baselines run cleanly through 2050; political embargoes, random
-geopolitical disruptions, recycling, and material substitution all
-exercised in scenario tests under `outputs/`.
+**Status**: ✅ Implemented and validated end-to-end. Lithium, Nickel,
+and Platinum 24-year baselines run cleanly under the bug-fixed model;
+canonical CSV / dashboard outputs are committed under `outputs/`.
+Political embargoes, random geopolitical disruptions, recycling, and
+material substitution are all exercised in scenario tests
+(`outputs/{baseline,chile_li,china_li,australia_li,chile_china_li,big3_li_5yr,sa_pt}/`).

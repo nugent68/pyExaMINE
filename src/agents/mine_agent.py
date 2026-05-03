@@ -1,30 +1,29 @@
 """
 MineAgent: Extracts raw minerals from reserves.
-Behavior: Produces if profitable, subject to disruptions.
+Behavior: Produces if profitable, subject to disruptions and embargoes.
 """
 
 from mesa import Agent
-import random
 
 
 class MineAgent(Agent):
     """Agent representing a mine that extracts raw minerals."""
-    
-    def __init__(self, unique_id, model, jurisdiction, ore_grade, 
+
+    def __init__(self, unique_id, model, jurisdiction, ore_grade,
                  production_capacity, extraction_cost, reserves):
         """Initialize a MineAgent.
-        
+
         Args:
             unique_id: Unique identifier
             model: Model instance
             jurisdiction: Country/region name
-            ore_grade: Fraction of pure mineral in ore (0-1)
-            production_capacity: Maximum tons/step
+            ore_grade: Fraction of pure mineral in ore (0-1, metadata only)
+            production_capacity: Maximum tons/step (contained mineral)
             extraction_cost: Cost per ton to extract ($/ton)
             reserves: Total remaining reserves (tons)
         """
         super().__init__(unique_id, model)
-        
+
         # Core attributes
         self.jurisdiction = jurisdiction
         self.ore_grade = ore_grade
@@ -32,10 +31,16 @@ class MineAgent(Agent):
         self.extraction_cost = extraction_cost
         self.reserves = reserves
         self.initial_reserves = reserves
-        
-        # Operational state
-        self.operational = True
+
+        # Operational state. Two independent state machines:
+        #   disruption_counter: >0 means temporarily shut down by a random
+        #     incident or geopolitical event; counts down per step and
+        #     auto-recovers at zero.
+        #   mothballed: True means the mine has voluntarily shut down
+        #     because the price fell below extraction cost. It restarts
+        #     when price recovers above extraction_cost * restart_margin.
         self.disruption_counter = 0
+        self.mothballed = False
 
         # Production tracking. Two views per step:
         #   available_production_this_step: gross output offered to the
@@ -50,45 +55,51 @@ class MineAgent(Agent):
         self.cumulative_production = 0
         self.embargoed_production_this_step = 0
         self.domestic_stockpile = 0
-        
+
+    @property
+    def operational(self):
+        """True iff the mine is currently producing."""
+        return self.disruption_counter == 0 and not self.mothballed
+
     def step(self):
         """Execute one time step of mine behavior."""
         self.production_this_step = 0
         self.available_production_this_step = 0
         self.embargoed_production_this_step = 0
 
-        # Check if recovering from disruption
+        # Tick down any active disruption. A disruption blocks production
+        # this step regardless of profitability.
         if self.disruption_counter > 0:
             self.disruption_counter -= 1
-            if self.disruption_counter == 0:
-                self.operational = True
             return
-        
-        # Random disruption check (2% probability)
-        if self.operational and random.random() < self.model.config.get("mine_disruption_probability", 0.02):
+
+        # Random disruption check (uses the model's seeded RNG so runs
+        # are reproducible from the seed).
+        rng = self.model.random_state
+        if rng.random() < self.model.config.get("mine_disruption_probability", 0.02):
             self._trigger_disruption()
             return
-        
-        # Check profitability
-        if not self._is_profitable():
-            self.operational = False
-            return
-        
-        # Produce minerals if operational and reserves available
-        if self.operational and self.reserves > 0:
-            self._produce()
-    
-    def _is_profitable(self):
-        """Check if mining is profitable at current prices."""
-        current_price = self.model.current_price
-        
-        # Mine operates if price > extraction cost
-        # Restarts if price > extraction_cost * 1.2 (20% margin)
-        if not self.operational:
-            return current_price > self.extraction_cost * 1.2
+
+        # Mothball / restart logic. We treat "shut down for low price" as
+        # a state separate from disruption so the mine actually reopens
+        # when the price recovers (previously it never did, because
+        # operational was set False but never restored).
+        restart_margin = self.model.config.get("mine_restart_margin", 1.2)
+        price = self.model.current_price
+        if self.mothballed:
+            if price > self.extraction_cost * restart_margin:
+                self.mothballed = False
+            else:
+                return
         else:
-            return current_price > self.extraction_cost
-    
+            if price < self.extraction_cost:
+                self.mothballed = True
+                return
+
+        # Produce minerals if reserves remain.
+        if self.reserves > 0:
+            self._produce()
+
     def _produce(self):
         """Produce minerals for this step.
 
@@ -113,36 +124,32 @@ class MineAgent(Agent):
         else:
             self.production_this_step = output
             self.available_production_this_step = output
-        
-        # Offer production to processors (handled by model's market mechanism)
-    
+
     def _trigger_disruption(self):
         """Trigger a random disruption event."""
         duration_min = self.model.config.get("disruption_duration_min", 3)
         duration_max = self.model.config.get("disruption_duration_max", 5)
-        
-        self.operational = False
-        self.disruption_counter = random.randint(duration_min, duration_max)
-    
+        rng = self.model.random_state
+        self.disruption_counter = rng.randint(duration_min, duration_max)
+
     def apply_geopolitical_disruption(self, duration):
         """Apply a geopolitical disruption to this mine.
-        
+
         Args:
             duration: Number of steps to remain disrupted
         """
-        self.operational = False
         self.disruption_counter = max(self.disruption_counter, duration)
-    
+
     def get_available_supply(self):
         """Get the amount available to sell this step."""
         return self.production_this_step
-    
+
     def sell_production(self, amount):
         """Sell a portion of this step's production.
-        
+
         Args:
             amount: Amount to sell (tons)
-        
+
         Returns:
             Actual amount sold
         """

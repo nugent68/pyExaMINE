@@ -50,7 +50,7 @@ class TransportAgent(Agent):
     
     def _deliver_shipments(self):
         """Deliver shipments that have reached their destination."""
-        current_step = self.model.schedule.steps
+        current_step = self.model.current_step
         
         # Find shipments ready for delivery
         ready_shipments = [s for s in self.in_transit if s['arrival_step'] <= current_step]
@@ -89,7 +89,7 @@ class TransportAgent(Agent):
             True if accepted, False if capacity exceeded
         """
         # Check capacity (simplified: just accept for now)
-        arrival_step = self.model.schedule.steps + self.lead_time
+        arrival_step = self.model.current_step + self.lead_time
         
         shipment = {
             'material': material_type,
