@@ -1,0 +1,14 @@
+# Curated estimate of major platinum smelters and refiners (2024).
+# Capacity[t/yr] is contained Pt output capacity.
+country,facility,capacity_2024[t/yr],conversion_efficiency,energy_cost
+South Africa,Anglo Rustenburg Smelter,55,0.85,4500000
+South Africa,Sibanye Marikana Smelter,30,0.82,4500000
+South Africa,Implats Springs Refinery,35,0.85,4500000
+South Africa,Northam Zondereinde,15,0.80,4500000
+Russia,Norilsk Refinery,20,0.85,5000000
+UK,Johnson Matthey Royston,10,0.90,5500000
+UK,Heraeus UK,5,0.90,5500000
+Germany,Heraeus Hanau,8,0.90,5500000
+USA,Stillwater Smelter MT,3,0.85,6000000
+Japan,Tanaka Kikinzoku,5,0.92,5800000
+Japan,Furuya Metal,3,0.92,5800000

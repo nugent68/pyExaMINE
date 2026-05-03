@@ -9,16 +9,24 @@ from mesa import Agent
 class ManufacturerAgent(Agent):
     """Agent representing a manufacturer that uses minerals to produce goods."""
 
-    def __init__(self, unique_id, model, mineral_intensity, production_capacity):
+    def __init__(self, unique_id, model, country, mineral_intensity,
+                 production_capacity):
         """Initialize a ManufacturerAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
+            country: Host country (used by routing engine when ordering
+                inputs from processors)
             mineral_intensity: Tons of mineral per unit of product
             production_capacity: Maximum production (units/step)
         """
         super().__init__(unique_id, model)
+
+        # Identity
+        self.country = country
+        self.facility = f"{country} aggregate"
+        self.label = f"{country}/manufacturers"
 
         # Core attributes
         self.initial_mineral_intensity = mineral_intensity
@@ -149,18 +157,14 @@ class ManufacturerAgent(Agent):
             self.ordered_this_step += actual
             order_amount -= actual
 
-            transport = self.model.select_transport('rail')
-            if transport is None:
-                self.input_inventory += actual
-            else:
-                transport.accept_shipment(
-                    material_type='processed',
-                    quantity=actual,
-                    destination=self,
-                    origin_jurisdiction='',
-                    dest_jurisdiction='',
-                    mineral_tons=actual,
-                )
+            self.model.dispatch_shipment(
+                material_type='processed',
+                quantity=actual,
+                origin_country=processor.country,
+                dest_country=self.country,
+                destination=self,
+                mineral_tons=actual,
+            )
 
     def _pending_inbound_processed(self):
         """Iterate shipments of processed mineral currently destined here."""

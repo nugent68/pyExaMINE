@@ -12,23 +12,31 @@ from mesa import Agent
 class TransportAgent(Agent):
     """Agent representing a transport service that moves materials with delays."""
 
-    def __init__(self, unique_id, model, mode, cost_per_unit, lead_time, capacity):
+    def __init__(self, unique_id, model, country, mode, cost_per_unit, capacity):
         """Initialize a TransportAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
+            country: Home country of this transport asset (used to prefer
+                origin-country fleet when selecting carriers)
             mode: Transport mode ('ship', 'rail', 'truck')
             cost_per_unit: Cost per ton ($/ton)
-            lead_time: Delivery delay in steps
             capacity: Maximum capacity (tons/step accepted; soft cap)
+
+        Note: lead_time is no longer per-agent; it is now determined by
+        the route table per shipment (e.g., Australia->China is 3 weeks
+        regardless of which Australian carrier is picked).
         """
         super().__init__(unique_id, model)
+
+        # Identity
+        self.country = country
+        self.label = f"{country}/{mode}"
 
         # Core attributes
         self.mode = mode
         self.cost_per_unit = cost_per_unit
-        self.lead_time = lead_time
         self.capacity = capacity
 
         # Transport queue: list of shipments in transit. Each is a dict:
@@ -72,6 +80,7 @@ class TransportAgent(Agent):
 
     def _deliver_shipments(self):
         current_step = self.model.current_step
+        closed_choke = getattr(self.model, 'closed_chokepoints', set())
 
         # Iterate over a copy so we can mutate in_transit safely.
         for shipment in list(self.in_transit):
@@ -82,6 +91,15 @@ class TransportAgent(Agent):
             dest = shipment.get('dest_jurisdiction', '')
             if (origin in self.disrupted_jurisdictions or
                     dest in self.disrupted_jurisdictions):
+                shipment['arrival_step'] += 1
+                continue
+
+            # Per-shipment chokepoint check: if any chokepoint on the
+            # route is currently closed, defer one step and retry. This
+            # is what implements "Suez closure delays anything routed
+            # through Suez until the chokepoint reopens".
+            shipment_choke = shipment.get('chokepoints') or []
+            if any(cp in closed_choke for cp in shipment_choke):
                 shipment['arrival_step'] += 1
                 continue
 
@@ -103,28 +121,31 @@ class TransportAgent(Agent):
 
     def accept_shipment(self, material_type, quantity, destination,
                         origin_jurisdiction='', dest_jurisdiction='',
-                        mineral_tons=0.0):
+                        mineral_tons=0.0, chokepoints=None, lead_time=None):
         """Accept a new shipment for delivery after lead_time steps.
 
         Args:
             material_type: 'ore' or 'processed'
-            quantity: Amount to ship (tons; for ore this is contained
-                mineral tons per the model's USGS convention)
+            quantity: Amount to ship (tons)
             destination: Agent that will receive the shipment (must
-                implement receive_shipment(material_type, quantity,
-                mineral_tons, origin_jurisdiction))
-            origin_jurisdiction: Country the goods are leaving
-            dest_jurisdiction: Country the goods are arriving in
-            mineral_tons: Embedded mineral content (only meaningful for
-                processed mineral that already carries an as-built
-                intensity through the chain)
+                implement receive_shipment)
+            origin_jurisdiction / dest_jurisdiction: Country names (for
+                disruption checks).
+            mineral_tons: Embedded mineral content for processed mineral.
+            chokepoints: List of chokepoint names traversed by this
+                route. The transport agent will defer delivery while any
+                of them is currently closed.
+            lead_time: Per-shipment lead time in steps. Determined by the
+                route table (e.g., Australia->China is 3 weeks); falls
+                back to 1 if not supplied.
 
-        Returns:
-            True if accepted (we currently always accept; capacity is a
-            soft cap recorded for diagnostics only).
+        Returns True if accepted; capacity is a soft cap, not enforced.
         """
         if quantity <= 0:
             return False
+
+        if lead_time is None:
+            lead_time = 1
 
         shipment = {
             'material': material_type,
@@ -133,7 +154,8 @@ class TransportAgent(Agent):
             'destination': destination,
             'origin_jurisdiction': origin_jurisdiction,
             'dest_jurisdiction': dest_jurisdiction,
-            'arrival_step': self.model.current_step + self.lead_time,
+            'chokepoints': list(chokepoints) if chokepoints else [],
+            'arrival_step': self.model.current_step + int(lead_time),
             'cost': self.cost_per_unit * quantity,
         }
 

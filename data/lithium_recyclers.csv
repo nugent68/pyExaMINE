@@ -1,0 +1,23 @@
+# Curated estimate of major lithium-ion battery recycling facilities (2024).
+# Capacity[t/yr] is contained Li metal recoverable.
+country,facility,capacity_2024[t/yr],recovery_efficiency,processing_cost
+USA,Redwood Materials NV,8000,0.95,4500
+USA,Redwood Materials SC,4000,0.95,4500
+USA,Li-Cycle Rochester NY,3000,0.92,4500
+USA,Li-Cycle Arizona,2500,0.92,4500
+USA,ABTC Nevada,1500,0.90,4800
+Canada,Li-Cycle Kingston,2500,0.92,4500
+Canada,Lithion,2000,0.92,4500
+Belgium,Umicore Hoboken,4000,0.95,4000
+Germany,BASF Schwarzheide,7000,0.95,4000
+Germany,Duesenfeld,2000,0.93,4200
+Germany,Volkswagen Salzgitter,2000,0.92,4200
+China,GEM Hunan,12000,0.93,3800
+China,BRUNP Foshan,15000,0.93,3800
+China,Huayou Cobalt,10000,0.93,3800
+China,GEM Wuxi,8000,0.92,3800
+China,Bangpu,5000,0.92,3800
+Korea,SungEel HiTech Gunsan,4000,0.93,4200
+Korea,POSCO Gwangyang,3000,0.93,4200
+Sweden,Northvolt Revolt,2500,0.92,4300
+Norway,Glencore Nikkelverk,1500,0.92,4500

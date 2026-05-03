@@ -10,16 +10,21 @@ import numpy as np
 class ConsumerAgent(Agent):
     """Agent representing consumer demand with price elasticity."""
 
-    def __init__(self, unique_id, model, base_demand, price_sensitivity):
+    def __init__(self, unique_id, model, country, base_demand, price_sensitivity):
         """Initialize a ConsumerAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
+            country: Host country (used to prefer local retailers)
             base_demand: Base demand per step (units)
             price_sensitivity: Price elasticity coefficient (negative)
         """
         super().__init__(unique_id, model)
+
+        # Identity
+        self.country = country
+        self.label = f"{country}/consumers"
 
         # Demand parameters
         self.base_demand = base_demand
@@ -69,19 +74,21 @@ class ConsumerAgent(Agent):
         self.current_demand = max(0, self.current_demand)
 
     def _purchase_from_retailers(self):
-        """Attempt to purchase goods from retailers in randomized order.
+        """Attempt to purchase goods from retailers in this country.
 
-        Shuffling per consumer per step prevents the early retailers in
-        model.retailers from monopolizing all sales while later ones
-        never see traffic.
+        End consumers buy locally (no cross-border individual shipping),
+        so we only consider retailers whose .country matches this
+        consumer's. If the local retailer is stocked out, the demand is
+        unfulfilled (the consumer doesn't import an EV from another
+        country).
         """
-        retailers = self.model.retailers
+        local_retailers = [r for r in self.model.retailers if r.country == self.country]
 
-        if not retailers:
+        if not local_retailers:
             self.unfulfilled_demand = self.current_demand
             return
 
-        order = list(retailers)
+        order = list(local_retailers)
         self.model.random_state.shuffle(order)
 
         remaining_demand = self.current_demand

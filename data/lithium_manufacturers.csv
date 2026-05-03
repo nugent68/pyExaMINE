@@ -1,0 +1,16 @@
+# Country-level lithium-ion battery / EV cell manufacturer share (2024).
+# share = fraction of global Li-cell production capacity in this country.
+# Used to size each country's manufacturer aggregate. Shares sum to 1.0.
+country,share
+China,0.62
+Korea,0.13
+Japan,0.06
+USA,0.07
+Germany,0.04
+Hungary,0.02
+Poland,0.02
+Sweden,0.01
+France,0.01
+UK,0.005
+Mexico,0.005
+India,0.01

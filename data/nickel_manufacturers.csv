@@ -1,0 +1,19 @@
+# Country-level nickel-using manufacturer share (2024).
+# Mostly stainless steel mills + EV battery cathode plants.
+# share = fraction of global Ni-consuming manufacturing in this country.
+country,share
+China,0.58
+Indonesia,0.08
+Korea,0.05
+Japan,0.05
+India,0.05
+USA,0.04
+Germany,0.04
+Italy,0.02
+Finland,0.02
+Spain,0.015
+Sweden,0.015
+Taiwan,0.01
+South Africa,0.01
+Brazil,0.01
+Russia,0.005

@@ -9,17 +9,25 @@ from mesa import Agent
 class ProcessorAgent(Agent):
     """Agent representing a processing facility that converts ore to pure mineral."""
 
-    def __init__(self, unique_id, model, conversion_efficiency, energy_cost, capacity):
+    def __init__(self, unique_id, model, country, facility,
+                 conversion_efficiency, energy_cost, capacity):
         """Initialize a ProcessorAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
+            country: Host country (used by routing engine)
+            facility: Facility name (e.g. 'Tianqi-Sichuan')
             conversion_efficiency: Fraction of ore converted to pure mineral (0-1)
             energy_cost: Cost per ton to process ($/ton)
             capacity: Maximum processing capacity (tons of ore/step)
         """
         super().__init__(unique_id, model)
+
+        # Identity
+        self.country = country
+        self.facility = facility
+        self.label = f"{country}/{facility}"
 
         # Core attributes
         self.conversion_efficiency = conversion_efficiency
@@ -112,19 +120,14 @@ class ProcessorAgent(Agent):
             self.purchased_this_step += actual
             remaining_capacity -= actual
 
-            transport = self.model.select_transport('ship')
-            if transport is None:
-                # Fallback: no transport fleet -> deliver immediately.
-                self.raw_ore_buffer += actual
-            else:
-                transport.accept_shipment(
-                    material_type='ore',
-                    quantity=actual,
-                    destination=self,
-                    origin_jurisdiction=mine.jurisdiction,
-                    dest_jurisdiction='',
-                    mineral_tons=0.0,
-                )
+            self.model.dispatch_shipment(
+                material_type='ore',
+                quantity=actual,
+                origin_country=mine.country,
+                dest_country=self.country,
+                destination=self,
+                mineral_tons=0.0,
+            )
 
     def _pending_inbound_ore(self):
         """Iterate shipments currently in transit destined for this processor.

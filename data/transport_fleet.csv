@@ -1,0 +1,39 @@
+# Per-country transport fleet sized to typical maritime/rail/truck activity
+# in critical-minerals trade. Scaled down from real bulk-carrier counts so
+# the model has a manageable number of agents (~50-80 total).
+# capacity_per_agent[t/step] is the soft cap on how much a single agent
+# accepts per step (used for diagnostics; not strictly enforced).
+country,mode,n_agents,capacity_per_agent
+China,ship,8,15000
+China,rail,4,8000
+China,truck,3,3000
+Indonesia,ship,5,15000
+Australia,ship,5,15000
+Chile,ship,3,15000
+Argentina,ship,2,15000
+Brazil,ship,3,15000
+Canada,ship,3,12000
+Canada,rail,2,8000
+USA,ship,4,15000
+USA,rail,3,8000
+USA,truck,2,3000
+Russia,rail,4,8000
+Russia,ship,2,12000
+Korea,ship,3,15000
+Japan,ship,3,15000
+Germany,rail,2,8000
+Germany,truck,2,3000
+Belgium,ship,1,12000
+Netherlands,ship,2,15000
+UK,ship,2,12000
+Norway,ship,1,12000
+Finland,ship,1,12000
+Sweden,ship,1,12000
+South Africa,ship,3,15000
+Zimbabwe,truck,1,3000
+New Caledonia,ship,1,12000
+Philippines,ship,2,15000
+Madagascar,ship,1,12000
+Cuba,ship,1,12000
+Mexico,ship,2,12000
+India,ship,3,15000

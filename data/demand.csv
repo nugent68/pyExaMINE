@@ -1,0 +1,12 @@
+# Global annual demand by mineral (tonnes/year). Baseline 2024 +
+# IEA-NetZero 2030 / 2050 scenarios for forward projections.
+mineral,year,scenario,demand_t_per_yr
+Lithium,2024,baseline,150000
+Lithium,2030,NetZero,430000
+Lithium,2050,NetZero,1500000
+Nickel,2024,baseline,3500000
+Nickel,2030,NetZero,5000000
+Nickel,2050,NetZero,7000000
+Platinum,2024,baseline,250
+Platinum,2030,NetZero,350
+Platinum,2050,NetZero,600

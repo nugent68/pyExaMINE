@@ -1,266 +1,194 @@
 """
-Data loader for USGS Critical Minerals Mapping data.
-Parses USGS_CMM.csv and extracts production, reserves, and demand data.
+Per-facility data loader for the worldwide mineral supply-chain model.
 
-Column headers may carry a unit annotation in square brackets, e.g.
-``Lithium_Production_2024[t/yr]``. The loader strips the suffix from the
-column name and rescales the column values into base units (tonnes for
-stocks, tonnes/year for flows). Downstream code therefore always sees
-quantities in tonnes / tonnes-per-year and never needs to know which
-unit the source CSV used.
+Reads CSVs under data/ at the project root:
+  - {mineral}_mines.csv         (per-facility production / reserves / cost)
+  - {mineral}_processors.csv    (per-facility refining capacity)
+  - {mineral}_recyclers.csv     (per-facility recycling capacity)
+  - {mineral}_manufacturers.csv (country-level share)
+  - {mineral}_consumers.csv     (country-level demand share)
+  - demand.csv                  (global demand by mineral / year / scenario)
+  - transport_fleet.csv         (per-country transport agents by mode)
+
+Each loader returns dictionaries / list-of-dicts in tonnes / tonnes-per-year.
+Rows beginning with "#" in the CSVs are stripped before parsing.
 """
 
-import re
-import pandas as pd
-import numpy as np
+import os
+import io
+from pathlib import Path
 from typing import Dict, List, Tuple
 
-
-# Conversion factors from each supported unit to the base unit
-# (tonnes for stocks, tonnes/year for flows). Counts and percents pass
-# through unchanged.
-UNIT_TO_BASE_FACTOR: Dict[str, float] = {
-    "":       1.0,
-    "t":      1.0,
-    "t/yr":   1.0,
-    "tonne":  1.0,
-    "tonnes": 1.0,
-    "kg":     1e-3,
-    "kg/yr":  1e-3,
-    "g":      1e-6,
-    "g/yr":   1e-6,
-    "kt":     1e3,
-    "kt/yr":  1e3,
-    "Mt":     1e6,
-    "Mt/yr":  1e6,
-    "%":      1.0,
-    "count":  1.0,
-}
-
-_UNIT_PATTERN = re.compile(r"^(?P<base>.+?)\s*\[\s*(?P<unit>[^\]]*)\s*\]\s*$")
+import pandas as pd
 
 
-def _parse_column_unit(column: str) -> Tuple[str, str]:
-    """Split a column header into (logical_name, unit_token).
+# Project root: this file is .../src/data/data_loader.py
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DATA_DIR = _PROJECT_ROOT / 'data'
 
-    Columns without a ``[unit]`` suffix return an empty unit token.
+
+# Map "Lithium" -> "lithium" prefix used in CSV filenames.
+_PREFIX = {'Lithium': 'lithium', 'Nickel': 'nickel', 'Platinum': 'platinum'}
+
+
+def _read_csv(path: Path) -> pd.DataFrame:
+    """Read a CSV, stripping out comment lines that start with '#'."""
+    if not path.exists():
+        raise FileNotFoundError(f"Data file not found: {path}")
+    with open(path, 'r') as f:
+        lines = [ln for ln in f if not ln.startswith('#')]
+    return pd.read_csv(io.StringIO(''.join(lines)))
+
+
+def _strip_unit_suffix(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip ``[unit]`` suffix from any column header so the rest of the
+    code sees clean names. Unit conversion is a no-op for now -- all
+    facility CSVs are already in tonnes / tonnes/year. The stripped names
+    end up as e.g. 'production_2024'.
     """
-    m = _UNIT_PATTERN.match(column)
-    if not m:
-        return column, ""
-    return m.group("base").strip(), m.group("unit").strip()
+    rename = {}
+    for col in df.columns:
+        if '[' in col:
+            rename[col] = col.split('[', 1)[0].strip()
+    if rename:
+        df = df.rename(columns=rename)
+    return df
 
 
-class USGSDataLoader:
-    """Loads and processes USGS Critical Minerals Mapping data."""
-
-    def __init__(self, csv_path: str = "USGS_CMM.csv"):
-        """Initialize the data loader.
-
-        Args:
-            csv_path: Path to USGS_CMM.csv file
-        """
-        self.csv_path = csv_path
-        self.data: pd.DataFrame = None
-        self.units: Dict[str, str] = {}
-        self._load_data()
-
-    def _load_data(self):
-        """Load the CSV, normalize column units to tonnes / tonnes-per-year."""
-        try:
-            raw = pd.read_csv(self.csv_path)
-        except Exception as e:
-            raise FileNotFoundError(f"Could not load {self.csv_path}: {e}")
-
-        rename_map: Dict[str, str] = {}
-        for col in raw.columns:
-            base, unit = _parse_column_unit(col)
-            if unit and unit not in UNIT_TO_BASE_FACTOR:
-                raise ValueError(
-                    f"Column '{col}' uses unsupported unit '{unit}'. "
-                    f"Supported: {sorted(UNIT_TO_BASE_FACTOR)}"
-                )
-            factor = UNIT_TO_BASE_FACTOR.get(unit, 1.0)
-            if factor != 1.0:
-                raw[col] = raw[col] * factor
-            rename_map[col] = base
-            self.units[base] = unit
-
-        self.data = raw.rename(columns=rename_map)
-        print(f"Loaded USGS data: {len(self.data)} countries")
-    
-    def _find_production_column(self, mineral: str) -> str:
-        """Return the production column for a mineral.
-
-        Matches any column starting with ``{mineral}_Production_`` so the
-        CSV can use any year suffix (e.g., ``_2024`` or ``_2025``).
-        """
-        prefix = f"{mineral}_Production_"
-        for col in self.data.columns:
-            if col.startswith(prefix):
-                return col
-        raise ValueError(f"No production column for mineral '{mineral}'")
-
-    def get_producing_countries(self, mineral: str) -> pd.DataFrame:
-        """Get countries that produce a specific mineral.
-
-        Args:
-            mineral: Mineral name (e.g., 'Lithium', 'Nickel', 'Platinum')
-
-        Returns:
-            DataFrame with producing countries and their data
-        """
-        production_col = self._find_production_column(mineral)
-        reserves_col = f"{mineral}_Reserves"
-
-        if reserves_col not in self.data.columns:
-            raise ValueError(f"No reserves column for mineral '{mineral}'")
-
-        producers = self.data[self.data[production_col] > 0].copy()
-
-        cols = ['Country', production_col, reserves_col]
-        demand_cols = [c for c in self.data.columns if mineral in c and 'Demand' in c]
-        cols.extend(demand_cols)
-
-        deposits_col = f"{mineral}_Num_Deposits"
-        if deposits_col in self.data.columns:
-            cols.append(deposits_col)
-
-        result = producers[cols].copy().fillna(0)
-        print(f"{mineral}: Found {len(result)} producing countries")
-        return result
-    
-    def get_global_demand(self, mineral: str) -> Dict[str, float]:
-        """Get global demand forecasts for a mineral.
-        
-        Args:
-            mineral: Mineral name
-        
-        Returns:
-            Dictionary with demand values for different years
-        """
-        demand_data = {}
-        demand_cols = [col for col in self.data.columns if mineral in col and 'Demand' in col]
-        
-        for col in demand_cols:
-            # Extract year and (optional) scenario from column name. A
-            # plain "..._Demand_2024" yields key "2024"; a scenario
-            # "..._Demand_2030_NetZero" yields key "2030_NetZero".
-            parts = col.split('_')
-            year_idx = [i for i, p in enumerate(parts) if p.isdigit()]
-            if year_idx:
-                year = parts[year_idx[0]]
-                scenario = '_'.join(parts[year_idx[0] + 1:])
-                key = f"{year}_{scenario}" if scenario else year
-
-                # Use the first non-zero value across rows so a 0 in row 0
-                # doesn't shadow a real global figure further down.
-                values = self.data[col].dropna()
-                non_zero = values[values > 0]
-                if len(non_zero) > 0:
-                    demand_data[key] = float(non_zero.iloc[0])
-                elif len(values) > 0:
-                    demand_data[key] = float(values.iloc[0])
-                else:
-                    demand_data[key] = 0.0
-        
-        return demand_data
-    
-    def calculate_market_shares(self, mineral: str) -> pd.DataFrame:
-        """Calculate market share percentage for each producing country."""
-        producers = self.get_producing_countries(mineral)
-        production_col = self._find_production_column(mineral)
-
-        total_production = producers[production_col].sum()
-        producers['Market_Share_Pct'] = (producers[production_col] / total_production) * 100
-
-        return producers
-    
-    def derive_mine_parameters(self, country: str, mineral: str,
-                               base_extraction_cost: float = 10000,
-                               default_ore_grade: float = 0.7) -> Dict:
-        """Derive mine parameters for a specific country and mineral.
-
-        Args:
-            country: Country name
-            mineral: Mineral name
-            base_extraction_cost: Base extraction cost in $/ton
-            default_ore_grade: Ore grade to assign (metadata only; the
-                model treats production_capacity as already in
-                contained-mineral tonnes per the USGS convention).
-
-        Returns:
-            Dictionary with mine parameters (production_capacity in
-            tonnes/year, reserves in tonnes).
-        """
-        producers = self.get_producing_countries(mineral)
-        country_data = producers[producers['Country'] == country]
-
-        if len(country_data) == 0:
-            raise ValueError(f"{country} does not produce {mineral}")
-
-        country_data = country_data.iloc[0]
-        production_col = self._find_production_column(mineral)
-        reserves_col = f"{mineral}_Reserves"
-
-        production = country_data[production_col]
-        reserves = country_data[reserves_col]
-
-        # Regional cost multipliers (simplified)
-        regional_multipliers = {
-            'China': 0.8, 'Indonesia': 0.9, 'Russia': 1.1, 'Australia': 1.3,
-            'Canada': 1.2, 'United States': 1.4, 'Chile': 1.0, 'Brazil': 0.95,
-            'South Africa': 1.0, 'Congo (Kinshasa)': 0.7, 'Philippines': 0.85,
-            'Other countries': 1.0,
-        }
-        multiplier = regional_multipliers.get(country, 1.0)
-        extraction_cost = base_extraction_cost * multiplier
-
-        return {
-            'jurisdiction': country,
-            'production_capacity': production,
-            'reserves': reserves,
-            'ore_grade': default_ore_grade,
-            'extraction_cost': extraction_cost,
-        }
-    
-    def get_all_mines_data(self, mineral: str, base_extraction_cost: float = 10000) -> List[Dict]:
-        """Get mine parameters for all producing countries.
-        
-        Args:
-            mineral: Mineral name
-            base_extraction_cost: Base extraction cost
-        
-        Returns:
-            List of dictionaries with mine parameters
-        """
-        producers = self.get_producing_countries(mineral)
-        mines_data = []
-        
-        for _, row in producers.iterrows():
-            country = row['Country']
-            try:
-                mine_params = self.derive_mine_parameters(country, mineral, base_extraction_cost)
-                mines_data.append(mine_params)
-            except Exception as e:
-                print(f"Warning: Could not derive parameters for {country}: {e}")
-        
-        return mines_data
+def _data_dir() -> Path:
+    """Allow MINERAL_DATA_DIR env override (handy for tests)."""
+    override = os.environ.get('MINERAL_DATA_DIR')
+    if override:
+        return Path(override)
+    return _DATA_DIR
 
 
-# Convenience function
-def load_mineral_data(mineral: str, csv_path: str = "USGS_CMM.csv") -> Tuple[List[Dict], Dict]:
-    """Load complete data for a mineral.
-    
-    Args:
-        mineral: Mineral name
-        csv_path: Path to USGS CSV
-    
-    Returns:
-        Tuple of (mines_data, demand_data)
+def _prefix_for(mineral: str) -> str:
+    if mineral not in _PREFIX:
+        raise ValueError(f"Unknown mineral '{mineral}'. Known: {list(_PREFIX)}")
+    return _PREFIX[mineral]
+
+
+def load_mines(mineral: str) -> List[Dict]:
+    """Return list of mine facility dicts for the named mineral."""
+    df = _strip_unit_suffix(_read_csv(_data_dir() / f"{_prefix_for(mineral)}_mines.csv"))
+    out = []
+    for _, row in df.iterrows():
+        out.append({
+            'country': str(row['country']).strip(),
+            'facility': str(row['facility']).strip(),
+            'production_capacity': float(row['production_2024']),
+            'reserves': float(row['reserves']),
+            'extraction_cost': float(row['extraction_cost']),
+        })
+    return out
+
+
+def load_processors(mineral: str) -> List[Dict]:
+    """Return list of processor facility dicts for the named mineral."""
+    df = _strip_unit_suffix(_read_csv(_data_dir() / f"{_prefix_for(mineral)}_processors.csv"))
+    out = []
+    for _, row in df.iterrows():
+        out.append({
+            'country': str(row['country']).strip(),
+            'facility': str(row['facility']).strip(),
+            'capacity': float(row['capacity_2024']),
+            'conversion_efficiency': float(row['conversion_efficiency']),
+            'energy_cost': float(row['energy_cost']),
+        })
+    return out
+
+
+def load_recyclers(mineral: str) -> List[Dict]:
+    """Return list of recycler facility dicts for the named mineral."""
+    df = _strip_unit_suffix(_read_csv(_data_dir() / f"{_prefix_for(mineral)}_recyclers.csv"))
+    out = []
+    for _, row in df.iterrows():
+        out.append({
+            'country': str(row['country']).strip(),
+            'facility': str(row['facility']).strip(),
+            'capacity': float(row['capacity_2024']),
+            'recovery_efficiency': float(row['recovery_efficiency']),
+            'processing_cost': float(row['processing_cost']),
+        })
+    return out
+
+
+def load_manufacturer_countries(mineral: str) -> List[Dict]:
+    """Return list of {country, share} dicts. Shares are normalised to sum 1."""
+    df = _read_csv(_data_dir() / f"{_prefix_for(mineral)}_manufacturers.csv")
+    total = df['share'].sum()
+    if total <= 0:
+        raise ValueError(f"Manufacturer shares for {mineral} sum to {total}")
+    return [
+        {'country': str(r['country']).strip(), 'share': float(r['share']) / total}
+        for _, r in df.iterrows()
+    ]
+
+
+def load_consumer_countries(mineral: str) -> List[Dict]:
+    """Return list of {country, share} dicts. Shares normalised to sum 1."""
+    df = _read_csv(_data_dir() / f"{_prefix_for(mineral)}_consumers.csv")
+    total = df['share'].sum()
+    if total <= 0:
+        raise ValueError(f"Consumer shares for {mineral} sum to {total}")
+    return [
+        {'country': str(r['country']).strip(), 'share': float(r['share']) / total}
+        for _, r in df.iterrows()
+    ]
+
+
+def load_demand(mineral: str) -> Dict[str, float]:
+    """Return {scenario_key: tonnes_per_year} for the named mineral.
+
+    Keys are 'YYYY' for the baseline and 'YYYY_scenario' otherwise (e.g.
+    '2024', '2030_NetZero').
     """
-    loader = USGSDataLoader(csv_path)
-    mines_data = loader.get_all_mines_data(mineral)
-    demand_data = loader.get_global_demand(mineral)
-    
-    return mines_data, demand_data
+    df = _read_csv(_data_dir() / 'demand.csv')
+    df = df[df['mineral'] == mineral]
+    out = {}
+    for _, r in df.iterrows():
+        year = str(int(r['year']))
+        scen = str(r.get('scenario', '')).strip()
+        key = year if scen in ('', 'baseline') else f"{year}_{scen}"
+        out[key] = float(r['demand_t_per_yr'])
+    return out
+
+
+def load_transport_fleet() -> List[Dict]:
+    """Return list of transport-agent specs across all countries / modes.
+
+    Each entry has keys: country, mode, n_agents, capacity_per_agent.
+    The model expands one TransportAgent per agent slot.
+    """
+    df = _read_csv(_data_dir() / 'transport_fleet.csv')
+    out = []
+    for _, r in df.iterrows():
+        out.append({
+            'country': str(r['country']).strip(),
+            'mode': str(r['mode']).strip().lower(),
+            'n_agents': int(r['n_agents']),
+            'capacity_per_agent': float(r['capacity_per_agent']),
+        })
+    return out
+
+
+def load_mineral_data(mineral: str) -> Dict:
+    """Load the full per-mineral data bundle.
+
+    Returns a dict with:
+      mines, processors, recyclers   -- list of facility dicts
+      manufacturer_countries,
+      consumer_countries             -- list of {country, share} dicts
+      demand                         -- {scenario_key: t/yr}
+      transport_fleet                -- list of transport-agent specs
+    """
+    return {
+        'mines':                  load_mines(mineral),
+        'processors':             load_processors(mineral),
+        'recyclers':              load_recyclers(mineral),
+        'manufacturer_countries': load_manufacturer_countries(mineral),
+        'consumer_countries':     load_consumer_countries(mineral),
+        'demand':                 load_demand(mineral),
+        'transport_fleet':        load_transport_fleet(),
+    }

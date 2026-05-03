@@ -1,0 +1,30 @@
+# Country-level lithium consumption share (2024, EV + electronics).
+# share = fraction of global Li end-product demand in this country.
+# Approximated from EV sales + battery-electronics consumption shares.
+# Each country gets one consumer agent sized by share.
+country,share
+China,0.55
+USA,0.13
+Germany,0.05
+France,0.025
+UK,0.02
+Norway,0.015
+Italy,0.015
+Spain,0.01
+Netherlands,0.01
+Sweden,0.01
+Korea,0.04
+Japan,0.03
+India,0.02
+Australia,0.01
+Canada,0.015
+Brazil,0.01
+Mexico,0.005
+Indonesia,0.005
+Thailand,0.005
+Vietnam,0.005
+UAE,0.005
+Saudi Arabia,0.005
+Turkey,0.005
+South Africa,0.005
+Argentina,0.003

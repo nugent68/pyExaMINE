@@ -9,15 +9,15 @@ from mesa import Agent
 class MineAgent(Agent):
     """Agent representing a mine that extracts raw minerals."""
 
-    def __init__(self, unique_id, model, jurisdiction, ore_grade,
+    def __init__(self, unique_id, model, jurisdiction, facility,
                  production_capacity, extraction_cost, reserves):
         """Initialize a MineAgent.
 
         Args:
             unique_id: Unique identifier
             model: Model instance
-            jurisdiction: Country/region name
-            ore_grade: Fraction of pure mineral in ore (0-1, metadata only)
+            jurisdiction: Country/region name (also exposed as .country)
+            facility: Facility / mine name (e.g. 'Greenbushes')
             production_capacity: Maximum tons/step (contained mineral)
             extraction_cost: Cost per ton to extract ($/ton)
             reserves: Total remaining reserves (tons)
@@ -26,7 +26,9 @@ class MineAgent(Agent):
 
         # Core attributes
         self.jurisdiction = jurisdiction
-        self.ore_grade = ore_grade
+        self.country = jurisdiction
+        self.facility = facility
+        self.label = f"{jurisdiction}/{facility}"
         self.production_capacity = production_capacity
         self.extraction_cost = extraction_cost
         self.reserves = reserves

@@ -2,11 +2,14 @@
 
 **Python ExaScale Minerals & Infrastructure Network Evaluation**
 
-An agent-based model (ABM) for simulating critical minerals supply chains using
-real-world USGS data. Models the complete lifecycle from mining through
-processing, manufacturing, consumption, and recycling with dynamic pricing,
-random geopolitical disruptions, scheduled political embargoes, and material
-substitution.
+An agent-based model (ABM) for simulating worldwide critical-minerals
+supply chains at facility resolution. Per-facility mines, processors,
+and recyclers; per-country manufacturers, retailers, and consumers; a
+per-country transport fleet that routes shipments through real maritime
+chokepoints (Strait of Hormuz, Suez Canal, Malacca Strait, Panama Canal,
+Cape of Good Hope) with mode-specific lead times and price dynamics
+shaped by random geopolitical disruptions, scheduled political embargoes,
+chokepoint crises, and material substitution.
 
 ## Overview
 
@@ -16,22 +19,28 @@ transitions:
 - **Nickel** - Battery cathodes and stainless steel
 - **Platinum** - Catalytic converters and fuel cells
 
-The bundled `USGS_CMM.csv` carries hand-curated 2024-baseline production,
-reserves, and demand-forecast (2030 / 2050 NetZero) values aligned with USGS
-Mineral Commodity Summaries 2025 and IEA Critical Minerals Outlook estimates.
-Country-level coverage focuses on the relevant producers for each mineral
-(19 rows; full list visible in the file).
+All facility-level inputs live in `data/` at the project root and are
+hand-curated estimates compiled from USGS Mineral Commodity Summaries
+2025, IEA Critical Minerals Outlook, S&P/BMI databases, and company
+filings. Per-mineral CSVs cover individual mines, processors, and
+recyclers (e.g. `data/lithium_mines.csv` lists Greenbushes, Pilgangoora,
+Salar de Atacama (SQM), etc.); country-level CSVs cover manufacturer
+and consumer demand shares; a single `data/transport_fleet.csv` defines
+the per-country shipping/rail/truck fleet.
 
 ## Key Features
 
 ### 🌍 Data-Driven
-- Country-level production, reserves, and forecast demand for Lithium, Nickel,
-  and Platinum, calibrated to USGS / IEA estimates.
-- **Self-describing units**: column headers carry a `[unit]` suffix
-  (`Lithium_Production_2024[t/yr]`, `Platinum_Reserves[t]`, etc.); the loader
-  parses the suffix and rescales to tonnes / tonnes-per-year so the in-memory
-  representation is uniform regardless of source units.
-- Calibrated extraction costs and ore grades per country.
+- **Per-facility** mines, processors, and recyclers for Lithium, Nickel,
+  and Platinum (~30 Li mines, ~25 Li processors, ~20 Li recyclers; the
+  Ni and Pt files are similarly populated).
+- **Country-level** manufacturer and consumer demand shares (~12
+  manufacturer countries, ~25 consumer countries).
+- Each agent labelled with its country and facility name (e.g.
+  `Australia/Greenbushes`, `China/Tianqi-Sichuan`); labels surface in
+  outputs and plots.
+- Calibrated extraction costs per facility, regional energy costs, and
+  recovery / conversion efficiencies per facility.
 
 ### 🤖 7 Agent Types
 - **MineAgent** - Extracts raw minerals; mothballs when price < extraction
@@ -77,11 +86,21 @@ Country-level coverage focuses on the relevant producers for each mineral
   retailers → consumers → transport (last so shipments accepted earlier
   in the step queue with the full lead time, not zero). Within each tier
   the activation order is shuffled (using the seeded RNG) for fairness.
-- **Real Transport Pipeline** - Ore and processed mineral move through
-  TransportAgent queues with mode-specific lead times before landing in
-  the receiving agent's inventory. This means a shock at a mine takes
-  the ship lead time to propagate to processors, and recovery from an
-  embargo lift drains over the configured release window — not instantly.
+- **Real Transport Pipeline with Routing** - Every cross-border shipment
+  (mine→processor, processor→manufacturer, manufacturer→retailer) is
+  routed through `src/data/routing.py`'s region-pair table. Each O-D
+  pair has a primary route (chokepoints traversed + lead-time weeks +
+  mode) and zero or more alternates. The dispatcher picks the first
+  open route at acceptance time; if a chokepoint closes mid-transit,
+  delivery is deferred until it reopens (so existing in-flight shipments
+  pile up rather than vanish).
+- **Chokepoint Crises** - Five maritime chokepoints (Strait of Hormuz,
+  Suez Canal, Malacca Strait, Panama Canal, Cape of Good Hope) can be
+  closed for a configurable window via `--chokepoint-crisis`. While
+  closed, every route that traverses the chokepoint is unavailable;
+  shipments either re-route via a longer alternate (Suez closed → Cape,
+  +3-4 weeks typical) or wait for reopening if every alternate is also
+  blocked.
 - **Market Pricing** - Flow-based signal: smoothed (supply / demand) ratio over
   a rolling window (default 8 steps) drives ±5% price moves; ratio < 0.95 →
   shortage → price up, ratio > 1.10 → surplus → price down.
@@ -126,41 +145,45 @@ Country-level coverage focuses on the relevant producers for each mineral
 pyExaMINE/
 ├── README.md                          # This file
 ├── INSTALL.md                         # Detailed install / uv guide
-├── USGS_CMM.csv                       # Source data (Li/Ni/Pt, unit-tagged headers)
-├── pyproject.toml                     # Project metadata + dependency declarations (uv)
+├── data/                              # Per-facility + per-country source data
+│   ├── lithium_mines.csv              # ~30 individual Li facilities
+│   ├── lithium_processors.csv         # ~25 individual Li refiners
+│   ├── lithium_recyclers.csv          # ~20 individual Li recyclers
+│   ├── lithium_manufacturers.csv      # country-level cell-mfg shares
+│   ├── lithium_consumers.csv          # country-level demand shares
+│   ├── nickel_*, platinum_*           # same structure for Ni and Pt
+│   ├── transport_fleet.csv            # per-country ship/rail/truck fleet
+│   └── demand.csv                     # global annual demand by year/scenario
+├── pyproject.toml                     # uv project metadata
 ├── uv.lock                            # Pinned dependency graph (committed)
 ├── requirements.txt                   # Legacy mirror for non-uv users
 ├── plans/                             # Architecture documentation
-│   ├── architecture_plan.md
-│   ├── quick_reference.md
-│   └── implementation_roadmap.md
 ├── src/                               # Source code
-│   ├── agents/                        # Agent implementations
-│   │   ├── mine_agent.py
+│   ├── agents/                        # Agent implementations (all labelled)
+│   │   ├── mine_agent.py              # .country, .facility, .label
 │   │   ├── processor_agent.py
-│   │   ├── transport_agent.py
+│   │   ├── transport_agent.py         # carries chokepoints per shipment
 │   │   ├── manufacturer_agent.py
 │   │   ├── retailer_agent.py
 │   │   ├── consumer_agent.py
 │   │   └── recycling_agent.py
-│   ├── model/                         # Main model logic
-│   │   ├── supply_chain_model.py
-│   │   └── market_mechanism.py       # Flow-based price update
+│   ├── model/
+│   │   ├── supply_chain_model.py      # closed_chokepoints, dispatch_shipment
+│   │   └── market_mechanism.py
 │   ├── data/
-│   │   └── data_loader.py             # Parses [unit] headers
+│   │   ├── data_loader.py             # reads data/ CSVs
+│   │   └── routing.py                 # region-pair routing + chokepoints
 │   ├── visualization/
 │   │   └── visualizer.py
-│   └── config/                        # Mineral-specific configs
+│   └── config/                        # Mineral-specific tunables
 │       ├── lithium_config.py
 │       ├── nickel_config.py
 │       └── platinum_config.py
 ├── outputs/                           # Generated results
-│   ├── lithium_supply_chain_analysis.png
-│   ├── lithium_model_data.csv
-│   ├── lithium_summary_stats.txt
-│   ├── nickel_*, platinum_*           # canonical 2050 baselines
-│   ├── embargo_comparison.png         # multi-scenario chart
-│   └── baseline/, chile_china_li/, big3_li_5yr/, …  # scenario subdirs
+│   ├── {lithium,nickel,platinum}_*    # canonical 24-yr baselines
+│   ├── baseline/, chile_li/, big3_li_5yr/, sa_pt/, …   # embargo scenarios
+│   ├── suez_li/, malacca_ni/, hormuz_li/, suez_pt/     # chokepoint scenarios
+│   └── embargo_comparison.png         # multi-scenario chart
 └── run_simulation.py                  # Main entry point
 ```
 
@@ -236,14 +259,41 @@ uv run python run_simulation.py --mineral lithium --steps 1248 --seed 42 \
     --embargo "Australia:624:260"
 ```
 
-The country name must match the `Country` column in `USGS_CMM.csv`
-(case-sensitive). Embargo events are logged when they fire and lift.
-You can also schedule embargoes in `src/config/{mineral}_config.py` via:
+The country name must match the `country` column in
+`data/{mineral}_mines.csv` (case-sensitive).
+
+### Run a Chokepoint Crisis Scenario
+
+The `--chokepoint-crisis` flag closes a named maritime chokepoint for a
+window. Any in-transit shipment whose route uses the closed chokepoint
+is delayed until it reopens; new shipments dispatched while it's closed
+re-route via an alternate (typically Cape of Good Hope at +3-4 weeks).
+
+```bash
+# Suez Canal closed for 8 weeks at step 624
+uv run python run_simulation.py --mineral lithium --steps 1248 --seed 42 \
+    --chokepoint-crisis "Suez Canal:624:8"
+
+# Malacca Strait closed for 8 weeks (large impact on Indonesia->China Ni)
+uv run python run_simulation.py --mineral nickel --steps 1248 --seed 42 \
+    --chokepoint-crisis "Malacca Strait:624:8"
+
+# Combined: SA embargo + Suez closure for Pt
+uv run python run_simulation.py --mineral platinum --steps 1248 --seed 42 \
+    --embargo "South Africa:624:52" \
+    --chokepoint-crisis "Suez Canal:624:26"
+```
+
+Known chokepoints: `Strait of Hormuz`, `Suez Canal`, `Malacca Strait`,
+`Panama Canal`, `Cape of Good Hope`. The country/route mappings live in
+`src/data/routing.py`. You can also schedule these in config:
 
 ```python
 "political_embargoes": [
     {"country": "Chile",     "start_step": 624, "duration": 52},
-    {"country": "China",     "start_step": 624, "duration": 52},
+],
+"chokepoint_crises": [
+    {"chokepoint": "Suez Canal",   "start_step": 624, "duration": 8},
 ],
 ```
 
@@ -258,6 +308,7 @@ You can also schedule embargoes in `src/config/{mineral}_config.py` via:
 --output-dir DIR                     # Output directory (default: outputs/)
 --no-viz                             # Skip generating PNG dashboards (faster)
 --embargo SPEC                       # Schedule a political embargo (repeatable)
+--chokepoint-crisis SPEC             # Close a maritime chokepoint (repeatable)
 ```
 
 ## Output Files
@@ -331,18 +382,24 @@ Tunable knobs (per-config): `price_signal_window_steps`,
 
 ## Validation (canonical 1248-step baseline, seed 42)
 
-24 weekly years of simulation per mineral, run on the model with real
-transport lead times, price-responsive mine utilization, processor
-inventory backpressure, embargo stockpile release, as-built intensity
-tracking through the chain, and corrected mineral intensities (Li
-8 kg/EV, Pt 3 g/catalyst). Numbers regenerated from scratch and
-committed under `outputs/`.
+24 weekly years of simulation per mineral on the worldwide model
+(per-facility mines/processors/recyclers, country-level manufacturers/
+consumers, region-pair routing through the 5-chokepoint network).
+Numbers regenerated from scratch and committed under `outputs/`.
 
 | | Avg price | Volatility | Recycling rate | Substitution | Avg mothballed |
 |---|---:|---:|---:|---:|---:|
-| Lithium  | $15,272 / t       | ±$2,193      |  2.0% | 0%    | 0.99 / 10 |
-| Nickel   | $18,763 / t       | ±$3,446      |  3.7% | 5%    | 0.02 / 12 |
-| Platinum | $31,655,663 / t   | ±$10,774,916 |  3.4% | 18%   | 0.00 / 6  |
+| Lithium  | $13,390 / t       | ±$1,634     |  6.7% |  0%   | 4.56 / 30 |
+| Nickel   | $17,094 / t       | ±$4,692     |  6.5% | 30%   | 0.04 / 29 |
+| Platinum | $36,103,818 / t   | ±$8,144,894 |  7.3% | 15%   | 0.00 / 18 |
+
+Mothballed counts are out of the per-mineral mine total (Li 30, Ni 29,
+Pt 18 facilities). Lithium runs near baseline price most of the time
+and never crosses the substitution threshold; Nickel and Platinum see
+larger price excursions because of their volatility (random
+geopolitical events have outsized impact when concentrated in one or
+two producer countries) and trip the substitution counter several
+times.
 
 Recycling rates are intentionally low because the realistic 10–12 yr
 product lifetime means EOL stream only emerges in the second half of
@@ -365,41 +422,69 @@ demand at the manufacturer).
 
 ## Political-embargo scenarios (Lithium, seed 42)
 
-`--embargo` flags re-route affected mine output into
-`MineAgent.domestic_stockpile` for the configured duration. The price
-signal reflects the loss because `supply_flow` excludes embargoed
-production. When the embargo lifts, the stockpile drains back into
-supply over `post_embargo_release_steps` (default 26 weeks) so the
-post-shock recovery is gradual rather than instant. All scenarios below
-run for 1248 steps with the embargo firing at step 624.
+`--embargo` flags re-route affected mine output into per-facility
+`MineAgent.domestic_stockpile` buckets for the configured duration. The
+price signal reflects the loss because `supply_flow` excludes embargoed
+production. When the embargo lifts, each mine's stockpile drains back
+into supply over `post_embargo_release_steps` (default 26 weeks) so
+recovery is gradual rather than instant. All scenarios run for 1248
+steps with the embargo firing at step 624.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Baseline (no embargo)         | $14,623 | — |
-| Chile only, 1 yr              | $16,603 | +13.5% |
-| China only, 1 yr              | $16,707 | +14.3% |
-| **Australia only, 1 yr**      | **$17,793** | **+21.7%** |
-| Chile + China, 1 yr           | $19,652 | +34.4% |
-| **Chile + China + AUS, 5 yr** | **$26,939** | **+82.4%** |
+| Baseline (no embargo)         | $13,331 | — |
+| China only, 1 yr              | $14,119 | +5.9% |
+| Chile only, 1 yr              | $14,776 | +10.8% |
+| **Australia only, 1 yr**      | **$15,169** | **+13.8%** |
+| Chile + China, 1 yr           | $16,308 | +22.3% |
+| **Chile + China + AUS, 5 yr** | **$23,928** | **+82.1%** |
 
-Single-country 1-year embargoes do not trigger substitution (price
-spike isn't sustained long enough to cross the 10-step counter even
-with the new wider price swings). The 5-year big-3 embargo accumulates
-pressure over the full window and pushes manufacturers to the **30%
-maximum substitution**. Embargoes now show larger price deltas than in
-prior runs because mine utilization can no longer ramp freely above
-nameplate to compensate — non-embargoed mines are already near their
-`mine_max_utilization` ceiling when prices spike, so the supply
-shortfall translates more directly into price.
+Australia is the largest single Li producer in the data and so its
+embargo creates the biggest single-country shock. Chile + China combined
+exceeds Australia alone. The 5-year big-3 embargo holds pressure long
+enough to push manufacturers to the **30% maximum substitution** cap.
 
-For Platinum, a 1-year South Africa embargo (~72% of global Pt
-production) **triples** the in-window price ($23.9 M → $73.4 M,
-+207.4%) and triggers the 20% substitution cap.
+For Platinum, a 1-year South Africa embargo (~70% of global Pt
+production) more than doubles the in-window price ($29.6 M → $70.3 M,
++137.4%) and trips the 20% substitution cap.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Pt baseline             | $23,888,839 | — |
-| **Pt SA embargo, 1 yr** | **$73,431,303** | **+207.4%** |
+| Pt baseline             | $29,610,244 | — |
+| **Pt SA embargo, 1 yr** | **$70,295,844** | **+137.4%** |
+
+## Chokepoint-crisis scenarios (seed 42, 8-week closure at step 624)
+
+A chokepoint closure delays in-transit shipments using that route until
+it reopens, and re-routes new shipments via the alternate (Cape of Good
+Hope, +3-4 weeks) when one exists. Effects are smaller than embargoes
+because the goods aren't lost, just delayed, and most major routes have
+an alternate. The exception is **Indonesia → China nickel via Malacca**,
+where Malacca is on the only short route and the volume is huge.
+
+In-window average price (24 weeks from step 624, covering the closure
+plus the lead-time tail) vs the no-crisis baseline at the same window:
+
+| Mineral | Chokepoint closed (8 wk) | In-window avg | Δ vs baseline |
+|---------|--------------------------|---------------:|--------------:|
+| Li      | (baseline, no crisis)    | $13,571        | — |
+| Li      | Suez Canal               | $13,885        | +2.3% |
+| Li      | Malacca Strait           | $13,487        | -0.6% |
+| Li      | Strait of Hormuz         | $13,454        | -0.9% |
+| **Ni**  | **(baseline)**           | **$13,808**    | — |
+| **Ni**  | **Malacca Strait**       | **$14,513**    | **+5.1%** |
+| Pt      | (baseline)               | $28,219,344    | — |
+| Pt      | Suez Canal               | $26,916,220    | -4.6% |
+
+Strait of Hormuz has essentially no impact on Lithium because Li trade
+doesn't transit the Persian Gulf. Suez closure adds modest pressure to
+Australian Li exports headed to Europe (re-routed via Cape). Malacca
+closure has no measurable effect on Lithium (Australia and Chile, the
+top Li producers, don't ship through it) but a clear effect on Nickel,
+because the dominant Indonesia → China route relies on it. Sub-baseline
+deltas (e.g. Pt-Suez) reflect random-noise variation against the
+no-crisis run; an 8-week chokepoint closure isn't long enough to fully
+clear the noise floor in the price signal.
 
 Visualization: [`outputs/embargo_comparison.png`](outputs/embargo_comparison.png).
 
@@ -416,10 +501,30 @@ Visualization: [`outputs/embargo_comparison.png`](outputs/embargo_comparison.png
 | Initial Price ($/ton) | 17,000 | 18,000 | 30,000,000 |
 | Mineral intensity (t / product unit) | 0.008 (8 kg Li/EV) | 0.04 (40 kg Ni/EV) | 3 × 10⁻⁶ (3 g Pt/catalyst) |
 | Product lifetime (steps) | 520 (~10 yr) | 520 (~10 yr) | 624 (~12 yr) |
-| Ore Grade (metadata)  | 0.85 | 0.65 | 0.55 |
-| Conversion Efficiency | 0.80 | 0.75 | 0.70 |
-| Collection Rate | 0.30 | 0.60 | 0.75 |
-| Recovery Efficiency | 0.70 | 0.75 | 0.85 |
+| Conversion Efficiency (per facility, avg) | 0.80 | 0.78 | 0.85 |
+| Collection Rate (aggregate) | 0.30 | 0.60 | 0.75 |
+| Recovery Efficiency (per facility, avg) | 0.93 | 0.91 | 0.91 |
+
+## Agent counts (worldwide model)
+
+| Agent type        | Lithium | Nickel | Platinum |
+|-------------------|--------:|-------:|---------:|
+| MineAgent         |   30    |   29   |   18     |
+| ProcessorAgent    |   25    |   28   |   11     |
+| RecyclingAgent    |   20    |   25   |   15     |
+| ManufacturerAgent |   12    |   15   |   13     |
+| RetailerAgent     |   25    |   25   |   25     |
+| ConsumerAgent     |   25    |   25   |   25     |
+| TransportAgent    |   85    |   85   |   85     |
+| **Total**         | **222** | **232** | **192** |
+
+Mines, processors, and recyclers come from the per-facility CSVs in
+`data/`. Manufacturer counts equal the producing-country count from
+`{mineral}_manufacturers.csv`. Retailers and consumers are one per
+country in `{mineral}_consumers.csv` (~25 countries cover ~95% of
+world demand). Transport agents are the same global fleet across all
+minerals, defined in `data/transport_fleet.csv` (per-country ship/
+rail/truck split, ~85 agents over ~26 countries).
 
 ### Tunable knobs (with sensible defaults)
 
@@ -445,19 +550,25 @@ Visualization: [`outputs/embargo_comparison.png`](outputs/embargo_comparison.png
 ## Contributing
 
 Contributions are welcome! Areas for extension:
-- Additional minerals (cobalt, copper, rare earths) — extend `USGS_CMM.csv`
-  with new `<Mineral>_Production_2024[t/yr]` and `<Mineral>_Reserves[t]`
-  columns and add a `<mineral>_config.py` to `src/config/`.
-- Per-jurisdiction transport routing (currently mode-only; could pick
-  routes by origin–destination pair, with per-route lead times and costs).
-- Per-jurisdiction risk weights for random geopolitical events (currently
-  uniform across producing countries).
-- Trade-policy scenarios (tariffs, export quotas, friend-shoring) building
-  on the embargo primitive.
+- Additional minerals (cobalt, copper, rare earths) — add per-facility
+  CSVs in `data/` (`<mineral>_mines.csv`, `_processors.csv`,
+  `_recyclers.csv`, `_manufacturers.csv`, `_consumers.csv`), append the
+  global demand to `data/demand.csv`, register the mineral prefix in
+  `src/data/data_loader.py:_PREFIX`, and add a `<mineral>_config.py`.
+- Refine the curated facility data (capacity, cost, recovery efficiency)
+  from primary sources (USGS Minerals Yearbook, IEA, S&P).
+- Add new chokepoints (Bab el-Mandeb, Bosporus, Danish Straits, etc.)
+  to `src/data/routing.py:CHOKEPOINTS` and the route table.
+- Per-jurisdiction risk weights for random geopolitical events
+  (currently uniform across producing countries).
+- Trade-policy scenarios (tariffs, export quotas, friend-shoring)
+  building on the embargo primitive.
 - Heterogeneous consumers (price sensitivity drawn from a distribution
-  rather than identical agents).
-- Capacity expansion: new mines coming online over time, or existing mines
-  expanding nameplate capacity in response to sustained price pressure.
+  rather than identical aggregates per country).
+- Capacity expansion: new mines coming online over time, or existing
+  mines expanding nameplate capacity under sustained price pressure.
+- Bilateral trade-flow constraints (today every manufacturer can source
+  from every processor; in reality there are long-term contracts).
 - Climate impact on mining operations.
 - Technology learning curves on extraction cost.
 
@@ -492,12 +603,11 @@ If you use this model in your research, please cite:
 
 ---
 
-**Status**: ✅ Implemented and validated end-to-end. Lithium, Nickel,
-and Platinum 24-year baselines run cleanly under the model with real
-transport lead times, price-responsive mine utilization, processor
-inventory backpressure, embargo stockpile release, as-built intensity
-tracking through the chain, and corrected mineral intensities;
-canonical CSV / dashboard outputs are committed under `outputs/`.
-Political embargoes, random geopolitical disruptions, recycling, and
-material substitution are all exercised in scenario tests
-(`outputs/{baseline,chile_li,china_li,australia_li,chile_china_li,big3_li_5yr,sa_pt}/`).
+**Status**: ✅ Implemented and validated end-to-end. Worldwide
+per-facility model with per-country manufacturers/retailers/consumers,
+labelled agents, region-pair routing through five maritime chokepoints,
+and CLI-schedulable embargoes + chokepoint crises. Canonical 24-year
+baselines for Li/Ni/Pt and 13 scenario runs are committed under
+`outputs/` (embargoes: `chile_li`, `china_li`, `australia_li`,
+`chile_china_li`, `big3_li_5yr`, `sa_pt`; chokepoint closures:
+`suez_li`, `malacca_li`, `hormuz_li`, `malacca_ni`, `suez_pt`).

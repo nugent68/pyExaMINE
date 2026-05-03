@@ -1,0 +1,35 @@
+# Curated estimate of major lithium mining operations (2024 baseline).
+# Sources: USGS Mineral Commodity Summaries 2025, IEA Critical Minerals Outlook,
+# S&P/BMI databases, and company reporting. Production[t/yr] is contained Li metal
+# (USGS convention). Reserves[t] also as Li metal.
+country,facility,production_2024[t/yr],reserves[t],extraction_cost
+Australia,Greenbushes,33000,3000000,9500
+Australia,Pilgangoora,18000,1500000,11000
+Australia,Wodgina,15000,1300000,11500
+Australia,Mt Marion,11000,500000,12000
+Australia,Mt Cattlin,5000,200000,12500
+Australia,Kathleen Valley,4000,800000,13000
+Australia,Bald Hill,2000,100000,13500
+Chile,Salar de Atacama (SQM),28000,5000000,7500
+Chile,Salar de Atacama (Albemarle),21000,4300000,7800
+China,Yichun-Yongxing,12000,600000,8500
+China,Yichun-Yahua,10000,500000,8600
+China,Sichuan-Yajiang,8000,500000,9200
+China,Sichuan-Methylia,5000,400000,9500
+China,Tibet-Zhabuye,4000,500000,10500
+China,Qinghai-CITIC,1500,300000,10000
+China,Qinghai-Salt Lake,500,200000,10000
+Argentina,Salar de Olaroz,8000,2000000,8000
+Argentina,Cauchari-Olaroz,7000,1500000,8200
+Argentina,Salar del Hombre Muerto,2500,400000,8500
+Argentina,Centenario-Ratones,500,100000,9000
+Brazil,Sigma Grota do Cirilo,8000,300000,9300
+Brazil,CBL Cachoeira,2000,90000,9800
+Canada,North American Lithium,3500,800000,11000
+Canada,Tanco,800,130000,12000
+Zimbabwe,Bikita,12000,400000,7500
+Zimbabwe,Arcadia,8000,200000,7800
+Zimbabwe,Sabi Star,2000,90000,8000
+USA,Silver Peak NV,1100,1400000,12500
+Portugal,Mina do Barroso,380,60000,11000
+Other countries,Other Li operations,5000,740000,10000
