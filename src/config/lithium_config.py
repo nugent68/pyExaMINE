@@ -108,6 +108,16 @@ LITHIUM_CONFIG = {
     # Li mine production grew ~30%/yr 2020-24; assume gradual moderation
     # to ~7-8%/yr CAGR over 2024-50 (consistent with IEA NetZero ramp).
     "mine_capacity_growth_per_year": 0.075,
+    # Price-responsive accelerated growth: when price stays above
+    # extraction_cost x mine_expansion_price_threshold for
+    # mine_expansion_trigger_steps consecutive (sticky-net) weeks,
+    # per-step capacity growth flips from base to "high". 0.15 reflects
+    # the upper end of realistic spike-driven build-out (the 2020-23
+    # actuals briefly hit ~30%/yr but a sustained 15% across the
+    # portfolio is a more defensible long-run cap).
+    "mine_capacity_growth_per_year_high": 0.15,
+    "mine_expansion_price_threshold": 2.0,
+    "mine_expansion_trigger_steps": 52,
     # Li chemical conversion capacity has been growing in lock-step with
     # mining (China-led brownfield + greenfield builds). Use the same
     # 7.5%/yr blended CAGR so refining keeps pace with mine growth.

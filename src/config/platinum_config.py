@@ -106,6 +106,15 @@ PLATINUM_CONFIG = {
     # declining. Allow modest 1%/yr nominal growth to keep pace with
     # demand from fuel-cell adoption.
     "mine_capacity_growth_per_year": 0.01,
+    # Price-responsive accelerated growth: deep-shaft Pt mining is
+    # capex-heavy and slow to scale, but sustained 2x+ pricing has
+    # historically pulled out brownfield expansion + recommissioning
+    # of mothballed shafts (Bushveld 2008-09 cycle, Sibanye-Stillwater
+    # 2020-22 PGM ramp). 5%/yr is achievable under sustained spike
+    # conditions even though baseline build is near-zero.
+    "mine_capacity_growth_per_year_high": 0.05,
+    "mine_expansion_price_threshold": 2.0,
+    "mine_expansion_trigger_steps": 52,
     # PGM smelting/refining capacity is similarly mature (Anglo, Sibanye
     # base loads). Match the 1%/yr nominal growth.
     "processor_capacity_growth_per_year": 0.01,

@@ -99,6 +99,13 @@ NICKEL_CONFIG = {
     # Indonesian Ni capacity has been growing ~15%/yr; global Ni more like
     # 3-4%/yr blended. Use 0.04 as a globally representative CAGR.
     "mine_capacity_growth_per_year": 0.04,
+    # Price-responsive accelerated growth: under sustained price >
+    # 2x extraction cost, capacity ramp accelerates to ~10%/yr -- in
+    # line with what Indonesian RKEF buildout achieved during the
+    # 2021-23 EV-grade Ni demand surge.
+    "mine_capacity_growth_per_year_high": 0.10,
+    "mine_expansion_price_threshold": 2.0,
+    "mine_expansion_trigger_steps": 52,
     # Refining capacity tracks mining (Indonesian RKEF + HPAL builds);
     # use the same blended CAGR as mining.
     "processor_capacity_growth_per_year": 0.04,

@@ -104,6 +104,20 @@ class MineAgent(Agent):
         # subsequent embargo cycle starts a fresh release.
         self._release_chunk_size = 0.0
 
+        # Price-responsive capacity expansion. Sticky counter that
+        # mirrors the substitution/mothball pattern: increments while
+        # price > extraction_cost * mine_expansion_price_threshold,
+        # decrements otherwise. Once it crosses
+        # mine_expansion_trigger_steps, per-step capacity growth
+        # switches from the baseline rate to the "high" rate (matches
+        # the real-world capex response to sustained spikes that the
+        # static mine_capacity_growth_per_year knob misses -- e.g. Li
+        # capacity grew ~30%/yr in 2020-23 spike, vs the 7.5%/yr
+        # blended baseline). Per-mine counter so the cheapest mines
+        # cross the threshold first and start expanding earliest --
+        # which is the correct merit-order behaviour.
+        self.high_price_capex_counter = 0
+
     @property
     def operational(self):
         """True iff the mine is currently producing."""
@@ -119,9 +133,41 @@ class MineAgent(Agent):
         #    to actual extraction this step -- previously it ran every
         #    step regardless of operational status, so a mothballed mine
         #    was silently gifted exploration reserves out of nothing.
+        #
+        #    Growth rate is price-responsive: sustained price >
+        #    extraction_cost * mine_expansion_price_threshold for
+        #    mine_expansion_trigger_steps consecutive (sticky-net) steps
+        #    flips the per-step rate from baseline to "high". Reverts to
+        #    baseline when the counter relaxes; already-built capacity
+        #    stays (you don't unbuild a shaft).
         cfg = self.model.config
         steps_per_year = cfg.get("steps_per_year", 52)
-        cap_growth_yr = cfg.get("mine_capacity_growth_per_year", 0.0)
+        base_growth_yr = cfg.get("mine_capacity_growth_per_year", 0.0)
+        high_growth_yr = cfg.get(
+            "mine_capacity_growth_per_year_high", base_growth_yr,
+        )
+        expansion_threshold_mult = float(
+            cfg.get("mine_expansion_price_threshold", 2.0)
+        )
+        expansion_trigger_steps = int(
+            cfg.get("mine_expansion_trigger_steps", 52)
+        )
+
+        price = self.model.current_price
+        if (self.extraction_cost > 0
+                and price > self.extraction_cost * expansion_threshold_mult):
+            self.high_price_capex_counter += 1
+        else:
+            self.high_price_capex_counter = max(
+                0, self.high_price_capex_counter - 1,
+            )
+
+        cap_growth_yr = (
+            high_growth_yr
+            if self.high_price_capex_counter >= expansion_trigger_steps
+            else base_growth_yr
+        )
+
         if cap_growth_yr > 0 and self.operational and self.reserves > 0:
             self.production_capacity *= (1.0 + cap_growth_yr / steps_per_year)
 
