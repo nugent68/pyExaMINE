@@ -73,10 +73,13 @@ the per-country shipping/rail/truck fleet.
   stage. **Capacity is the CSV's post-conversion output capacity**;
   input throughput is derived as `output_capacity / efficiency`, so an
   82%-yield 40 kt/yr Li plant can feed ~48.8 kt/yr of contained-Li
-  input. **Inventory backpressure**: ore purchases halt when expected
-  post-processing inventory would exceed `processor_inventory_cap_weeks`,
-  so processed inventory can't grow without bound when downstream demand
-  collapses. Capacity grows per step at
+  input. Ore purchases are sized by **inventory backpressure** alone
+  (`processor_inventory_cap_weeks` of expected output inventory caps
+  the ordered pipeline). The previous version also imposed a one-step
+  throughput cap that double-counted in-transit ore, throttling actual
+  processing to ~25-30% of nameplate when ore lead times are 3+ weeks;
+  removing it lets the pipeline naturally fill to ~6 weeks of input
+  throughput. Capacity grows per step at
   `processor_capacity_growth_per_year / steps_per_year` so refining
   keeps pace with mining capacity build-out under multi-decade demand
   growth.
@@ -91,10 +94,16 @@ the per-country shipping/rail/truck fleet.
   output buffer, so EOL deposits use the intensity at manufacture time
   instead of re-reading current intensity at retire time (matters after
   substitution events).
-- **RetailerAgent** - Manages inventory with (s,Q) policy and a multi-order
-  pipeline (up to `retailer_max_pending_orders` outstanding). Embedded
-  mineral content travels with shipped goods to preserve as-built
-  intensity through to consumers.
+- **RetailerAgent** - Manages inventory with an (s, Q) policy whose `s`
+  and `Q` **scale with the demand-trajectory growth factor** (so the
+  policy stays correctly sized as demand grows ~10x by 2050). Sources
+  goods from manufacturers **region-preferenced**: same-country first,
+  then same-region, then global -- mirroring real supply relationships
+  and avoiding the long-lead-time fragmentation that otherwise
+  collapses fulfillment in high-demand countries. Multi-order pipeline
+  (up to `retailer_max_pending_orders` outstanding). Embedded mineral
+  content travels with shipped goods to preserve as-built intensity
+  through to consumers.
 - **ConsumerAgent** - Generates price-sensitive demand and shops retailers
   in randomized order each step (no first-retailer monopoly). Deposits
   the embedded mineral content of purchases into the EOL pool with the
@@ -536,58 +545,65 @@ consumers, region-pair routing through the 5-chokepoint network) under
 the IEA NetZero demand trajectory. Numbers regenerated from scratch by
 `scripts/regenerate_outputs.py` and committed under `outputs/`.
 
-| | Avg price | Volatility | Recycling rate | Substitution | Avg mothballed |
-|---|---:|---:|---:|---:|---:|
-| Lithium  | $7,632 / t        | ±$3,561     |  1.3% |  0%   | 13.08 / 30 |
-| Nickel   | $6,014 / t        | ±$3,601     |  0.3% |  0%   | 20.90 / 29 |
-| Platinum | $11,783,360 / t   | ±$7,289,769 |  1.0% |  0%   | 11.00 / 18 |
+| | Avg price | Volatility | Recycling rate | Substitution | Avg mothballed | Fulfillment |
+|---|---:|---:|---:|---:|---:|---:|
+| Lithium  | $17,337 / t        | ±$2,624     |  6.2% |  0%   | 0 / 30  | 73.5% |
+| Nickel   | $11,412 / t        | ±$2,379     |  5.0% |  0%   | 0 / 29  | 76.5% |
+| Platinum | $35,188,109 / t    | ±$7,072,089 | 20.2% | 20%   | 0 / 18  | 66.8% |
 
 Mothballed counts are out of the per-mineral mine total (Li 30, Ni 29,
-Pt 18 facilities). The narrative under NetZero demand and
-sustained-pressure mothball:
+Pt 18 facilities); zero mothballs across the run is the expected
+behavior — under properly-flowing demand the cost-anchored price
+keeps every mine above its cash cost. The narrative under NetZero
+demand:
 
-- **Lithium** cycles in a wide $4-25 k/t band as supply oscillates
-  through boom/bust. Mines ride out price dips at the
-  `mine_min_utilization / mine_baseline_utilization` ≈ 0.67×
-  utilization floor for months at a time before any of them mothball;
-  when supply eventually exceeds demand and price collapses below
-  cash cost, the 52-week mothball trigger fires for the high-cost
-  mines and supply re-tightens. Avg price ≈ 1.0× cheapest active
-  extraction cost — the price hugs the cost-curve floor most of the
-  time.
-- **Nickel** is the most structurally oversupplied. Indonesian RKEF
-  capacity growth (~4 %/yr) plus the relatively shallow NetZero
-  demand curve (2.0× by 2050) keeps avg price *below* the cheapest
-  active extraction cost (0.88×) — high-cost Australian / Canadian
-  Ni stays mothballed most of the run (avg 21 / 29 mines offline),
-  mirroring the real 2024 Australian shutdowns under Indonesian
-  oversupply. The remaining Indonesian operations carry the load.
-- **Platinum** has the widest swings. The cost-anchored band scales
-  with the live cost curve as low-cost SA shafts produce against
-  fewer competing supply sources, and the 26-week warm-restart lag
-  + smaller producer base give Pt the largest peak-to-trough swings
-  of any mineral (volatility ±$7.3 M/t on an $11.8 M/t average).
-  Substitution doesn't trip because the price rarely sustains the
-  $45 M/t threshold for the 12-step trigger window.
+- **Lithium** runs near baseline price most of the time. The cost
+  anchor keeps the price oscillating around an avg ~1.3× marginal
+  cost (a healthy mining-industry margin). Capacity grows ~6× by
+  2050 (7.5 %/yr CAGR) but demand grows ~10×; the price drift
+  through the 2040s is visible but doesn't trigger substitution
+  under these knobs.
+- **Nickel** is structurally oversupplied. Indonesian supply growth
+  (modelled at 4 %/yr) outpaces NetZero Ni demand (2.0× by 2050),
+  pushing price toward the cost-curve floor. Avg price ~$11.4 k/t,
+  near the cheapest extraction cost — high-cost Australian / Canadian
+  Ni runs at the `mine_min_utilization` floor for long stretches,
+  mirroring the real 2024 wave of Australian Ni shutdowns under
+  Indonesian oversupply, but with the sustained-pressure mothball
+  threshold not quite tripping under these dynamics.
+- **Platinum** is constrained. Capacity grows only 1 %/yr while
+  NetZero fuel-cell + autocat demand grows 2.4×. Avg price $35.2 M/t
+  sustains the 20 % maximum substitution by mid-run as Pt scarcity
+  deepens. Volatility ±$7.1 M/t reflects the small producer base
+  (only 18 mines) and Pt's lower price elasticity.
 
-Recycling rates are modest because (a) the realistic 10–12 yr product
-lifetime means the EOL stream only emerges in the second half of the
-24-year run and (b) the new dynamics produce much higher mine output,
-so the recycled/total ratio drops even though absolute recycled volume
-is similar. The per-mineral recovery cap
-`collection_rate × recovery_efficiency` = 21 % / 45 % / 64 % is
-approached only at long horizons.
+Recycling rates emerge in the second half of the run as the EOL
+stream from the realistic 10–12 yr product-lifetime delay starts to
+land (Pt at 20 % mirrors the high real-world PGM autocatalyst
+recovery rate; Li at 6 % and Ni at 5 % are still ramping at the end
+of the 24-yr window).
 
-A note on **fulfillment rate** in the per-mineral summary stats: with
-realistic intensities, total *product* demand at the consumers exceeds
-what current mineral supply can support (`baseline_product_demand =
-mineral_demand / intensity`, where intensity is per-EV / per-autocat).
-Fulfillment rates (~12 % Li, ~26 % Ni, ~16 % Pt) reflect this
-mineral-supply constraint on aspirational product demand, not a model
-bug. The mineral-tonnage flow itself stays balanced (mine output
-≈ mineral demand at the manufacturer); when mines mothball during
-boom/bust troughs the product-fulfillment rate drops further until
-the cycle restarts.
+**Fulfillment rate** ≈ 67–77 % across minerals. The previous version
+of this README explained low fulfillment as "mineral-supply
+constraint on aspirational product demand" — that explanation was
+wrong. The earlier ~10–25 % fulfillment was an artefact of the
+processor throughput-cap bug (which throttled refining to ~25–30 %
+of nameplate when ore lead times exceed 1 step) and a static
+retailer (s, Q) policy that didn't scale with demand growth. With
+those fixed, fulfillment now reflects realistic friction:
+- transport lead times (1–3 wks ship to Asia, 3–6 wks ship to
+  Europe, 1 wk truck domestic) leave the retailer pipeline
+  partially empty during stockout windows in the (s, Q) cycle;
+- random geopolitical events shut producing jurisdictions for 5–15
+  steps each, removing supply temporarily;
+- per-step demand growth runs ahead of capacity build-out for some
+  windows, especially mid-2040s under the NetZero ramp.
+
+The remaining gap to 100 % is mostly the (s, Q) cycle: each retailer
+spends ~1 step per cycle stocked out before the next shipment
+arrives. Real-world retailers smooth this with vendor-managed
+inventory and demand forecasting, neither of which the model
+implements.
 
 ## Political-embargo scenarios (Lithium, seed 42)
 
@@ -602,38 +618,31 @@ embargo duration itself.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Baseline (no embargo)         | $8,071  | — |
-| China only, 1 yr              | $11,151 | +38.2% |
-| Chile only, 1 yr              | $12,895 | +59.8% |
-| Australia only, 1 yr          | $10,720 | +32.8% |
-| **Chile + China, 1 yr**       | **$14,805** | **+83.4%** |
-| **Chile + China + AUS, 5 yr** | **$25,512** | **+216.1%** |
+| Baseline (no embargo)         | $18,348 | — |
+| China only, 1 yr              | $21,576 | +17.6% |
+| Chile only, 1 yr              | $23,086 | +25.8% |
+| Australia only, 1 yr          | $26,393 | +43.9% |
+| **Chile + China, 1 yr**       | **$26,712** | **+45.6%** |
+| **Chile + China + AUS, 5 yr** | **$27,492** | **+49.8%** |
 
-Embargo impacts are substantially larger than under the previous
-mothball-trap dynamics because supply is now actually being produced
-for the embargo to take off the market: pre-fix, all mines had
-mothballed within ~10 weeks of t=0 and the embargo was firing on
-zero supply. Severity ordering: China alone < Australia alone < Chile
-alone < Chile+China < big-3 5yr. (Chile-alone outranks Australia-alone
-because the Salar mines are very low cost — losing them displaces
-high-cost Chinese supply that gets called online at a higher
-extraction cost, lifting the merit-order marginal cost more than the
-Australian shortfall does.) The big-3 5-year embargo amplifies for
-two reasons: it covers ~75 % of global supply, and the 5-year window
-is long enough for high-cost mines to be called online persistently.
+Severity ordering: China alone < Chile alone < Australia alone <
+Chile+China ≈ big-3 5 yr. The big-3 5-year embargo is only marginally
+larger than Chile+China because once you've removed the cheapest
+producers, the price climbs to where high-cost Chinese supply is the
+marginal producer — adding Australia on top doesn't change which
+mine is at the margin, only how much capacity is required from it.
+The 5-year duration also gives substitution and recycling time to
+respond, capping the price ceiling.
 
 For Platinum, a 1-year South Africa embargo (~70 % of global Pt
-production) lifts the in-window price from ~$7.2 M/t to ~$10.8 M/t
-(+49.7 %). Note the lower nominal price level vs the previous
-mothball-trap baseline (~$35 M/t pinned at the soft ceiling) — Pt
-now actually has supply pressing on the cost curve, so the price
-level reflects the cost-anchored dynamics rather than the pre-fix
-saturation.
+production) lifts the in-window price from ~$30 M/t to ~$47 M/t
+(+55 %), reflecting Pt's small producer base and the time required
+for the modeled substitution counter to absorb the shock.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Pt baseline             | $7,225,563  | — |
-| Pt SA embargo, 1 yr     | $10,814,666 | +49.7% |
+| Pt baseline             | $30,131,764  | — |
+| Pt SA embargo, 1 yr     | $46,725,778  | +55.1% |
 
 ## Chokepoint-crisis scenarios (seed 42, 8-week closure at step 624)
 
@@ -648,28 +657,23 @@ plus the lead-time tail) vs the no-crisis baseline at the same window:
 
 | Mineral | Chokepoint closed (8 wk) | In-window avg | Δ vs baseline |
 |---------|--------------------------|---------------:|--------------:|
-| Li      | (baseline, no crisis)    | $8,331         | — |
-| Li      | Suez Canal               | $7,336         | -11.9% |
-| Li      | Malacca Strait           | $7,619         | -8.5% |
-| Li      | Strait of Hormuz         | $8,377         | +0.6% |
-| Ni      | (baseline)               | $8,636         | — |
-| Ni      | Malacca Strait           | $8,636         |  0.0% |
-| Pt      | (baseline)               | $7,816,954     | — |
-| Pt      | Suez Canal               | $7,714,460     | -1.3% |
+| Li      | (baseline, no crisis)    | $18,268        | — |
+| Li      | Suez Canal               | $17,811        | -2.5% |
+| Li      | Malacca Strait           | $18,518        | +1.4% |
+| Li      | Strait of Hormuz         | $18,084        | -1.0% |
+| Ni      | (baseline)               | $11,946        | — |
+| Ni      | Malacca Strait           | $11,490        | -3.8% |
+| Pt      | (baseline)               | $33,650,546    | — |
+| Pt      | Suez Canal               | $34,487,434    | +2.5% |
 
-Hormuz/Li correctly shows ~0% impact (Li doesn't transit the
-Persian Gulf). The negative Suez/Li and Malacca/Li deltas reflect the
-routing engine's alt-route logic: when the primary route closes, the
-dispatcher picks the longer Cape alternative, which adds 3–4 weeks of
-lead time. With the new dynamics the system runs near the cost-curve
-floor most of the time, so the extra in-flight inventory acts as a
-buffer that suppresses the short-term price *during* the closure (the
-material in the pipeline still arrives, just later). Real markets
-don't show this — the absorption is an artefact of the model carrying
-more in-transit inventory than typical commercial buffers, and is one
-of the better candidates for a future calibration pass. Sub-baseline
-deltas on short closures (e.g. Li/Suez −11.9 %) reflect this
-buffering effect more than any genuine price-recovery dynamic.
+Short 8-week closures produce small, mostly directionally-correct
+impacts now that the supply chain is properly flowing: Malacca Strait
+closure on Li (+1.4 %) reflects the lead-time penalty of the Cape
+re-route. Hormuz/Li (~−1 %) is essentially noise (Li doesn't transit
+the Persian Gulf). Negative deltas on short closures (Li/Suez −2.5 %,
+Ni/Malacca −3.8 %) reflect a small RNG-window-positioning floor
+combined with extra in-flight inventory absorbing the short-term
+price.
 
 Short 8-week closures remain modest in impact — goods are delayed,
 not lost, and most major routes have alternates. The 26-week and
@@ -688,33 +692,30 @@ is the longest event in each scenario. Plots:
 
 | Mineral | Scenario | In-window avg | Δ vs baseline |
 |---------|---------|---------------:|--------------:|
-| Li | asia_crisis_2030       | $6,454         | +21.5% |
-| Li | li_nationalism_2035    | $18,074        | +141.8% |
-| Li | multi_crisis_2040      | $5,758         | -17.2% (Russia/Indo not Li producers) |
-| Ni | asia_crisis_2030       | $11,749        | +1.2% (China is processor, not producer) |
-| Ni | indonesia_squeeze_2032 | $4,077         | +0.4% (window starts in oversupply trough) |
-| Ni | multi_crisis_2040      | $10,218        | +21.0% |
-| Pt | asia_crisis_2030       | $15,832,808    | -1.0% (China embargo doesn't bottle Pt) |
-| Pt | sa_pt_crisis_2030      | $33,868,164    | +111.8% |
-| Pt | multi_crisis_2040      | $16,547,087    | +132.3% |
+| Li | asia_crisis_2030       | $22,095        | +14.2% |
+| Li | li_nationalism_2035    | $28,333        | +51.7% |
+| Li | multi_crisis_2040      | $18,133        | +1.0% (Russia/Indo not Li producers) |
+| Ni | asia_crisis_2030       | $13,127        | -1.9% (China is processor, not producer) |
+| Ni | indonesia_squeeze_2032 | $24,431        | +85.0% |
+| Ni | multi_crisis_2040      | $18,735        | +93.9% |
+| Pt | asia_crisis_2030       | $36,906,075    | -12.7% (China embargo doesn't bottle Pt) |
+| Pt | sa_pt_crisis_2030      | $46,398,714    | +9.8% |
+| Pt | multi_crisis_2040      | $31,022,632    | +3.2% |
 
-The largest impacts are now on **Platinum**: `sa_pt_crisis_2030`
-(+112%) and `multi_crisis_2040` (+132%) reflect Pt's small producer
-base and the fact that the multi_crisis_2040 events (Russia +
-Indonesia embargoes) bottle up Pt-producing capacity (Russian Pt and
-the Indonesian PGM byproduct stream). Lithium's `li_nationalism_2035`
-(Chile + Australia 2-year embargoes + Suez closure) lifts the price
-~142 % — covering the largest two Li producer nations for two years
-is enough to push high-cost Chinese supply firmly to the marginal
-producer position. The Ni `indonesia_squeeze_2032` near-zero delta
-is misleading: the Ni baseline is in a deep oversupply trough at step
-416 (avg $4 k/t) and the Indonesian withdrawal pulls the price up
-*to* the cheapest non-Indonesian extraction cost rather than past
-it, registering as ~0 % in absolute window terms. The price *trajectory*
-shows the embargo pulling supply meaningfully tighter — see
-`scenarios_2050.png`. Negative deltas on the Li `multi_crisis_2040`
-and Pt `asia_crisis_2030` rows reflect chokepoint buffering (see the
-chokepoint section above).
+Indonesia Ni is now the most decisive single-source dependency the
+model captures: `indonesia_squeeze_2032` (+85 %) and
+`multi_crisis_2040` (+94 %) both push Ni dramatically higher. Lithium's
+`li_nationalism_2035` (Chile + Australia 2-year embargoes + Suez
+closure) lifts price ~52 % — comparable to the canonical big-3
+embargo. Pt scenarios show smaller deltas because (i) Pt baseline is
+already running well above marginal cost under NetZero demand growth,
+and (ii) the substitution counter is already pinned at the 20 % cap
+from baseline, leaving less headroom for further price escalation.
+The negative deltas (Pt asia_crisis_2030 −12.7 %, Ni asia_crisis_2030
+−1.9 %) reflect that China is a processor / consumer rather than
+producer for those minerals — embargoing China removes *demand* for
+processed material more than it removes supply, depressing the
+in-window price.
 
 ## Documentation
 
@@ -771,14 +772,16 @@ rail/truck split, ~85 agents over ~26 countries).
 | `reserve_replacement_rate` | 0.70 Li / 0.50 Ni / 0.30 Pt | Fraction of nameplate per-step output added back to reserves each step (exploration replenishment). |
 | `post_embargo_release_steps` | 26 | Steps over which a lifted embargo drains the domestic stockpile back into supply. |
 | `processor_safety_stock_weeks` | 2.0 | Buffer (in weeks of *output* capacity) below which a processor won't sell. |
-| `processor_inventory_cap_weeks` | 8.0 | Ceiling: a processor stops buying ore once expected post-processing inventory would exceed this. |
+| `processor_inventory_cap_weeks` | 8.0 | Ceiling: a processor stops buying ore once expected post-processing inventory (current + (raw_ore + in_transit) × efficiency) would exceed this. Sole constraint on ore purchasing — the in-flight pipeline naturally fills to roughly (cap − safety) weeks of input throughput. |
 | `processor_warmstart_safety_multiplier` | 2.0 | Initial processed inventory as a multiple of safety stock (avoids dead pipeline during transport warmup). |
 | `processor_capacity_growth_per_year` | 0.075 Li / 0.04 Ni / 0.01 Pt | Per-year growth applied to each processor's `output_capacity` per step. Mirrors the mining capacity-expansion knob so refining doesn't bottleneck multi-decade demand growth. |
 | `manufacturer_target_inventory_weeks` | 4 | Manufacturer's target input buffer in weeks of full-capacity production. |
 | `manufacturer_order_rate` | 0.5 | Per-step fraction of the target gap a manufacturer orders. |
 | `manufacturer_capacity_headroom` | 1.5 | Aggregate manufacturer capacity vs. baseline product demand. Capacity also scales with the demand-trajectory growth factor. |
 | `manufacturer_warmstart_input_fraction` | 0.5 | Initial input inventory as a fraction of target. |
-| `retailer_max_pending_orders` | 3 | Max simultaneous outstanding orders per retailer. |
+| `retailer_reorder_point_multiplier` | 4.0 (5.0 Pt) | Reorder point in *weeks of current per-step demand* (scales with `demand_growth_factor`). Default covers a 3-week ship lead time + 1 week safety stock; Pt uses 5 weeks for the higher transport-security buffer. |
+| `retailer_order_quantity_multiplier` | 3.0 (3.5 Pt) | Order quantity in weeks of current per-step demand (also scales with growth). |
+| `retailer_max_pending_orders` | 3 | Max simultaneous outstanding shipments per retailer. |
 | `price_signal_window_steps` | 8 | Smoothing window for the supply/demand price signal. |
 | `price_elasticity` | 0.25 | Per-step price move per unit of `log(supply/demand)`. A 30 % shortage moves the price ~7 %/step (capped at `price_max_step_pct`). |
 | `price_max_step_pct` | 0.08 | Hard cap on per-step move magnitude. |

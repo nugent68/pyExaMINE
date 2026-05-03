@@ -5,23 +5,23 @@ Supply Chain Model Summary: Lithium
 Simulation Length: 1248 steps
 
 PRICE DYNAMICS:
-  Average Price: $7,609.01/ton
-  Final Price: $13,919.66/ton
-  Price Volatility (std): $3,349.28
+  Average Price: $17,376.74/ton
+  Final Price: $14,139.24/ton
+  Price Volatility (std): $2,614.97
 
 SUPPLY:
-  Average Mine Output: 22,096.78 tons/step
-  Average Recycled Supply: 298.13 tons/step
-  Recycling Rate: 1.33%
-  Average Processor Inventory: 50,477.80 tons
+  Average Mine Output: 12,324.14 tons/step
+  Average Recycled Supply: 808.28 tons/step
+  Recycling Rate: 6.15%
+  Average Processor Inventory: 51,604.90 tons
 
 DEMAND:
-  Total Demand: 2,270,256,262.31 product units
-  Fulfillment Rate: 11.95%
+  Total Demand: 2,266,693,302.55 product units
+  Fulfillment Rate: 73.38%
 
 DISRUPTIONS:
   Average Disrupted Mines: 2.50
-  Average Mothballed Mines: 13.00
+  Average Mothballed Mines: 0.00
 
 SUBSTITUTION:
   Final Mineral Intensity: 0.008000 tons/unit
