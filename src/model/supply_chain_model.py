@@ -27,8 +27,9 @@ from ..agents.recycling_agent import RecyclingAgent
 from ..data.data_loader import load_mineral_data
 from ..data.routing import CHOKEPOINTS, select_route_or_fallback
 from .market_mechanism import (
-    update_price, check_geopolitical_event,
-    select_affected_jurisdiction, calculate_disruption_duration
+    update_price, marginal_cost, cheapest_active_cost,
+    check_geopolitical_event,
+    select_affected_jurisdiction, calculate_disruption_duration,
 )
 
 
@@ -77,6 +78,12 @@ class MineralSupplyChainModel(Model):
         # Rolling supply/demand history for the price signal
         self.supply_flow_history: list = []
         self.demand_flow_history: list = []
+
+        # Cost-curve tracking (set by _update_price each step; exposed
+        # on the data collector as Marginal_Cost / Cheapest_Active_Cost
+        # so users can see the dynamic price band).
+        self._marginal_cost = 0.0
+        self._cheapest_cost = 0.0
 
         # Agent lists per tier
         self.mines = []
@@ -575,17 +582,34 @@ class MineralSupplyChainModel(Model):
         supply_smoothed = sum(self.supply_flow_history) / len(self.supply_flow_history)
         demand_smoothed = sum(self.demand_flow_history) / len(self.demand_flow_history)
 
-        shortage_ratio = float(self.config.get("price_shortage_ratio", 0.95))
-        surplus_ratio = float(self.config.get("price_surplus_ratio", 1.10))
+        # Cost-anchored price update. marginal_cost is the merit-order
+        # cost of the last operational mine called online to meet
+        # demand; the price gravitates toward this in the absence of
+        # imbalance. The cost curve is computed live from the mine
+        # state so depletion / mothballing / capacity expansion all
+        # flow through to the price band.
+        self._marginal_cost = marginal_cost(self.mines, demand_smoothed)
+        self._cheapest_cost = cheapest_active_cost(self.mines)
+
+        elasticity = float(self.config.get("price_elasticity", 0.4))
+        max_step_pct = float(self.config.get("price_max_step_pct", 0.15))
+        anchor_strength = float(self.config.get("price_anchor_strength", 0.05))
+        ceiling_mc_multiple = float(self.config.get("price_ceiling_mc_multiple", 8.0))
+        floor_cost_fraction = float(self.config.get("price_floor_cost_fraction", 0.6))
 
         self.current_price = update_price(
             self.current_price,
             supply_smoothed,
             demand_smoothed,
-            self.price_floor,
-            self.price_ceiling,
-            shortage_ratio=shortage_ratio,
-            surplus_ratio=surplus_ratio,
+            self._marginal_cost,
+            self._cheapest_cost,
+            elasticity=elasticity,
+            max_step_pct=max_step_pct,
+            anchor_strength=anchor_strength,
+            ceiling_mc_multiple=ceiling_mc_multiple,
+            floor_cost_fraction=floor_cost_fraction,
+            hard_floor=self.price_floor,
+            hard_ceiling=self.price_ceiling,
         )
 
     # ------------------------------------------------------------------
@@ -651,6 +675,8 @@ class MineralSupplyChainModel(Model):
             model_reporters={
                 "Step": lambda m: m.current_step,
                 "Global_Price": lambda m: m.current_price,
+                "Marginal_Cost": lambda m: m._marginal_cost,
+                "Cheapest_Active_Cost": lambda m: m._cheapest_cost,
                 "Total_Processor_Inventory": lambda m: sum(a.inventory for a in m.processors),
                 "Total_Mine_Output": lambda m: sum(a.available_production_this_step for a in m.mines),
                 "Total_Recycled_Supply": lambda m: sum(a.recycled_this_step for a in m.recyclers),

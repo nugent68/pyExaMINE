@@ -12,10 +12,17 @@ NICKEL_CONFIG = {
     # informational unless the column is removed.
     "default_annual_demand_tons": 3500000.0,
 
-    # Price parameters ($/ton)
+    # Price parameters ($/ton). Cost-curve soft band does the real work.
     "initial_price": 18000,
-    "price_floor": 7200,      # 40% of initial
-    "price_ceiling": 54000,   # 300% of initial
+    "price_floor": 3000,       # outer catastrophe bound
+    "price_ceiling": 250000,   # outer catastrophe bound
+
+    # Cost-anchored price model knobs.
+    "price_elasticity": 0.25,
+    "price_max_step_pct": 0.08,
+    "price_anchor_strength": 0.10,
+    "price_ceiling_mc_multiple": 8.0,
+    "price_floor_cost_fraction": 0.6,
     
     # Agent counts
     "n_mines": "auto",        # Derived from USGS data

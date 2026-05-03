@@ -6,10 +6,18 @@ PLATINUM_CONFIG = {
     # Mineral identification
     "mineral_type": "Platinum",
     
-    # Price parameters ($/ton) - Note: Platinum is precious metal, very high prices
-    "initial_price": 30000000,    # ~$1000/oz * 31103 g/kg * 1000 kg/ton
-    "price_floor": 12000000,      # 40% of initial
-    "price_ceiling": 90000000,    # 300% of initial
+    # Price parameters ($/ton). Pt is a precious metal so prices are high.
+    # Cost-curve soft band does the real work; hard limits are catastrophe bounds.
+    "initial_price": 30000000,     # ~$1000/oz * 31103 g/kg * 1000 kg/ton
+    "price_floor":     5000000,    # outer catastrophe bound (~17% of initial)
+    "price_ceiling": 400000000,    # outer catastrophe bound (~13x initial)
+
+    # Cost-anchored price model knobs.
+    "price_elasticity": 0.25,
+    "price_max_step_pct": 0.08,
+    "price_anchor_strength": 0.10,
+    "price_ceiling_mc_multiple": 8.0,
+    "price_floor_cost_fraction": 0.6,
     
     # Agent counts (fewer due to concentrated production)
     "n_mines": "auto",        # Derived from USGS data (very few producers)

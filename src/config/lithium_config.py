@@ -12,10 +12,21 @@ LITHIUM_CONFIG = {
     # informational unless the column is removed.
     "default_annual_demand_tons": 150000.0,
 
-    # Price parameters ($/ton)
+    # Price parameters ($/ton). The hard floor / ceiling are
+    # outermost catastrophe bounds; in normal operation the
+    # cost-curve soft band (price_floor_cost_fraction *
+    # cheapest_active_cost ... price_ceiling_mc_multiple *
+    # marginal_cost) does the real work.
     "initial_price": 17000,
-    "price_floor": 6800,      # 40% of initial
-    "price_ceiling": 51000,   # 300% of initial
+    "price_floor": 3000,       # ~18% of initial; soft floor anchors at cheapest cost.
+    "price_ceiling": 200000,   # ~12x initial; lets a true crisis show as a level.
+
+    # Cost-anchored price model knobs (see src/model/market_mechanism.py).
+    "price_elasticity": 0.25,           # move per unit log(supply/demand)
+    "price_max_step_pct": 0.08,          # cap on per-step move
+    "price_anchor_strength": 0.10,       # log-pull toward marginal cost
+    "price_ceiling_mc_multiple": 8.0,    # soft ceiling = N x marginal cost
+    "price_floor_cost_fraction": 0.6,    # soft floor = f x cheapest cost
     
     # Agent counts
     "n_mines": "auto",        # Derived from USGS data

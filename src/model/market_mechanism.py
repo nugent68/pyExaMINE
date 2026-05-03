@@ -1,54 +1,169 @@
 """
 Market mechanism for supply chain model.
-Handles global price dynamics and geopolitical events.
+
+Cost-anchored price dynamics:
+
+- The per-step move is *proportional* to the log of the supply/demand
+  ratio (capped at ``max_step_pct``), so a small imbalance produces a
+  small move and a severe shortage produces a large but bounded one.
+  The discrete +5%/-5% / dead-band rule it replaces saturated all
+  shortage scenarios at the same speed, making them indistinguishable.
+- An exponential pull toward the merit-order ``marginal_cost`` provides
+  long-run mean reversion. When the price drifts away from cost (up
+  during a shock, or down under structural surplus), the anchor brings
+  it back over many steps.
+- The soft band scales with the cost curve: the floor is a fraction of
+  the *cheapest active extraction cost*, and the ceiling is a multiple
+  of marginal cost. Both update each step as the cost curve shifts
+  (depletion, mothballing, capacity expansion). Outer hard
+  ``price_floor``/``price_ceiling`` config values remain as catastrophe
+  bounds but normally don't bind.
 """
 
+import math
 import random
 
 
-def update_price(current_price, supply_flow, demand_flow,
-                 price_floor, price_ceiling,
-                 shortage_ratio=0.95, surplus_ratio=1.10,
-                 step_pct=0.05):
-    """Update global price based on the supply/demand flow ratio.
+def update_price(
+    current_price,
+    supply_flow,
+    demand_flow,
+    marginal_cost,
+    cheapest_cost,
+    *,
+    elasticity=0.4,
+    max_step_pct=0.15,
+    anchor_strength=0.05,
+    ceiling_mc_multiple=8.0,
+    floor_cost_fraction=0.6,
+    hard_floor=0.0,
+    hard_ceiling=float('inf'),
+):
+    """Update global price using a proportional move + log-linear anchor.
 
     Args:
         current_price: Current price ($/ton).
-        supply_flow: Mineral entering the market this step (tons/step) —
+        supply_flow: Mineral entering the market this step (tons/step) --
             mine output (excluding any embargoed/stockpiled production)
             plus recycled supply. Typically smoothed over a small window
             by the caller.
         demand_flow: Mineral demanded this step (tons/step), already
             converted from product units via mineral intensity. Typically
             smoothed over the same window.
-        price_floor: Minimum price.
-        price_ceiling: Maximum price.
-        shortage_ratio: If supply/demand falls below this, price rises.
-        surplus_ratio: If supply/demand exceeds this, price falls.
-        step_pct: Price adjustment fraction per step.
+        marginal_cost: Short-run merit-order marginal cost ($/ton) --
+            the extraction cost of the last operational mine that would
+            need to be called online to meet demand at this step.
+            Acts as the equilibrium anchor.
+        cheapest_cost: Cheapest active extraction cost ($/ton). Sets
+            the soft floor of the price band.
+        elasticity: Per-step move per unit of log(supply/demand). A 30%
+            shortage (ratio 0.7, log -0.36) moves the price by
+            elasticity * 0.36 = 14% (capped at max_step_pct).
+        max_step_pct: Hard cap on per-step move magnitude (positive
+            and negative).
+        anchor_strength: Per-step pull toward marginal_cost in log
+            space. 0.05 means the price closes ~5% of the log-gap to
+            marginal_cost each step.
+        ceiling_mc_multiple: Soft ceiling = ceiling_mc_multiple *
+            marginal_cost. Default 8x lets a true crisis still show as
+            a level rather than saturating a fixed config ceiling.
+        floor_cost_fraction: Soft floor = floor_cost_fraction *
+            cheapest_cost. Default 60% lets price dip briefly below
+            cash-cost but not arbitrarily low.
+        hard_floor / hard_ceiling: Outer catastrophe bounds (config
+            ``price_floor`` / ``price_ceiling``). Normally don't bind.
 
     Returns:
         Updated price.
-
-    Why flow-based: an inventory-level signal is masked by safety-stock
-    rules in the agents (processors hold inventory at safety stock, so
-    the inventory level barely moves even under a major upstream shock).
-    Comparing fresh supply against fresh demand makes the price respond
-    immediately when production or recycling falls behind consumption.
     """
-    if demand_flow <= 0:
+    if current_price <= 0:
         return current_price
 
-    ratio = supply_flow / demand_flow
-
-    if ratio < shortage_ratio:
-        new_price = current_price * (1.0 + step_pct)
-    elif ratio > surplus_ratio:
-        new_price = current_price * (1.0 - step_pct)
+    # 1. Imbalance-driven proportional move (log-symmetric).
+    if supply_flow > 0 and demand_flow > 0:
+        log_ratio = math.log(supply_flow / demand_flow)
+        # log_ratio < 0 => shortage => move > 0 (price up).
+        move = -elasticity * log_ratio
+        if move > max_step_pct:
+            move = max_step_pct
+        elif move < -max_step_pct:
+            move = -max_step_pct
     else:
-        new_price = current_price
+        move = 0.0
 
-    return max(price_floor, min(new_price, price_ceiling))
+    # 2. Log-linear anchor toward marginal cost.
+    if marginal_cost > 0:
+        anchor_pull = anchor_strength * math.log(marginal_cost / current_price)
+    else:
+        anchor_pull = 0.0
+
+    new_price = current_price * math.exp(move + anchor_pull)
+
+    # 3. Soft cost-curve band.
+    if marginal_cost > 0:
+        soft_ceiling = ceiling_mc_multiple * marginal_cost
+        new_price = min(new_price, soft_ceiling)
+    if cheapest_cost > 0:
+        soft_floor = floor_cost_fraction * cheapest_cost
+        new_price = max(new_price, soft_floor)
+
+    # 4. Outer catastrophe bounds (rarely bind; safety net only).
+    return max(hard_floor, min(new_price, hard_ceiling))
+
+
+def marginal_cost(mines, demand_per_step):
+    """Short-run merit-order marginal cost ($/ton).
+
+    Walks operational mines (not mothballed, not currently disrupted) in
+    cost order, accumulating per-step capacity. Returns the extraction
+    cost of the mine where cumulative capacity first meets
+    ``demand_per_step``. If aggregate operational capacity falls short,
+    returns the highest-cost operational mine (the binding marginal
+    producer at full system stretch). Falls back to the global cheapest
+    extraction cost when no mines are operational at all.
+
+    Mothballed mines aren't included because they aren't producing this
+    step. As price rises and triggers their restart, they rejoin the
+    cost curve naturally on subsequent steps.
+    """
+    if not mines:
+        return 0.0
+    if demand_per_step <= 0:
+        return min(m.extraction_cost for m in mines if m.extraction_cost > 0)
+
+    operational = sorted(
+        (m for m in mines if m.disruption_counter == 0 and not m.mothballed
+         and m.extraction_cost > 0),
+        key=lambda m: m.extraction_cost,
+    )
+    if not operational:
+        # No active producers -- fall back to global cheapest cost so
+        # the anchor still has a meaningful target.
+        return min(m.extraction_cost for m in mines if m.extraction_cost > 0)
+
+    cumulative = 0.0
+    last_cost = operational[0].extraction_cost
+    for mine in operational:
+        last_cost = mine.extraction_cost
+        cumulative += getattr(mine, 'production_capacity', 0.0)
+        if cumulative >= demand_per_step:
+            return last_cost
+    # Operational capacity falls short -- the most expensive active mine
+    # is the binding marginal producer.
+    return last_cost
+
+
+def cheapest_active_cost(mines):
+    """Cheapest extraction cost among operational mines, for the floor."""
+    if not mines:
+        return 0.0
+    operational = [
+        m for m in mines
+        if m.disruption_counter == 0 and not m.mothballed and m.extraction_cost > 0
+    ]
+    if operational:
+        return min(m.extraction_cost for m in operational)
+    return min(m.extraction_cost for m in mines if m.extraction_cost > 0)
 
 
 def check_geopolitical_event(probability, random_state=None):
