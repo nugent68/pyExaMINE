@@ -797,39 +797,44 @@ recovery is gradual rather than instant. All scenarios run for 1248
 steps with the embargo firing at step 624 (year 12). Window is the
 embargo duration itself.
 
-| Scenario | In-window avg ($/t) | Δ vs baseline |
-|----------|--------------------:|--------------:|
-| Baseline (no embargo)         | $14,570 | — |
-| China only, 1 yr              | $16,223 | +11.3% |
-| Chile only, 1 yr              | $17,791 | +22.1% |
-| Australia only, 1 yr          | $17,963 | +23.3% |
-| **Chile + China, 1 yr**       | **$20,959** | **+43.9%** |
-| **Chile + China + AUS, 5 yr** | **$21,998** | **+51.0%** |
-
-Severity ordering: China alone < Australia ≈ Chile alone <
-Chile+China ≈ big-3 5 yr. The big-3 5-year embargo is comparable to
-Chile+China because once you've removed the cheapest producers the
-price climbs to where high-cost Chinese / Other supply is the
-marginal producer — adding Australia on top doesn't change which
-mine is at the margin. The 5-year duration also gives substitution
-and the price-responsive capacity-expansion mechanic time to
-respond, capping the price ceiling. **Important caveat**: these
-single-seed deltas have a `±5–12 %` band when you re-run at
-different seeds (see the ensemble-runner section above) — single
-points can be misleading, especially for the smaller scenarios.
-
-For Platinum, a 1-year South Africa embargo (~70 % of global Pt
-production) barely moves the in-window price because the Pt
-baseline is already pinned at the structural soft ceiling
-(8 × marginal-cost) for most of the run. The supply gap is so
-binding that removing the largest producer doesn't push price any
-higher; an SA embargo *during the post-2045 window where the price
-finally comes off the ceiling* would show a much larger response.
+N=20 paired ensemble (seeds 42–61), each scenario's per-seed delta
+taken against the baseline at the matching seed so shared
+geopolitical events cancel out. Reported as
+`mean Δ ± std [p10, p90]`.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Pt baseline             | $46,707,128  | — |
-| Pt SA embargo, 1 yr     | $46,736,359  | +0.1% (ceiling-pinned) |
+| Baseline (no embargo)         | $14,506 ± 1,096 | — |
+| China only, 1 yr              | $16,543 ± 1,031 | **+15.1% ± 6.4%** [+8.3, +23.6] |
+| Australia only, 1 yr          | $17,487 ± 1,076 | **+21.7% ± 6.4%** [+13.5, +29.1] |
+| Chile only, 1 yr              | $18,177 ± 1,234 | **+26.4% ± 6.0%** [+19.9, +34.2] |
+| **Chile + China, 1 yr**       | $21,548 ± 1,315 | **+49.8% ± 4.7%** [+43.8, +54.8] |
+| **Chile + China + AUS, 5 yr** | $22,048 ± 314   | **+71.3% ± 4.3%** [+66.7, +77.5] |
+
+Severity ordering: China alone < Australia < Chile alone <
+Chile+China < big-3 5 yr. The big-3 5-year embargo (+71% ± 4%) is
+clearly the largest signal — removing all three cheapest producers
+for five years pushes the marginal mine to the highest-cost
+operational tier and the price-responsive capacity-expansion
+mechanism doesn't have time to fully fill the gap. Chile+China at
++50% ± 5% is the second most decisive shock; either single-country
+embargo lands in the +15-26% range with overlapping confidence
+bands. The narrow ±4% std on the big-3 scenario reflects how
+robustly the cheapest-producer-removal signal dominates other
+sources of seed-to-seed variance.
+
+For Platinum, a 1-year South Africa embargo barely moves the
+in-window price because the Pt baseline is already pinned at the
+structural soft ceiling (8 × marginal-cost) for most of the run.
+The supply gap is so binding that removing the largest producer
+doesn't push price any higher; an SA embargo *during the post-2045
+window where the price finally comes off the ceiling* would show
+a much larger response.
+
+| Scenario | In-window avg ($/t) | Δ vs baseline |
+|----------|--------------------:|--------------:|
+| Pt baseline             | $46,653,651 ± 117,419 | — |
+| Pt SA embargo, 1 yr     | $46,676,492 ± 124,810 | +0.3% ± 0.7% (ceiling-pinned) |
 
 ## Chokepoint-crisis scenarios (seed 42, 8-week closure at step 624)
 
@@ -842,34 +847,31 @@ an alternate.
 In-window average price (24 weeks from step 624, covering the closure
 plus the lead-time tail) vs the no-crisis baseline at the same window:
 
+N=20 paired ensemble (seeds 42–61), in-window = 24 weeks from
+step 624. Reported as `mean Δ ± std [p10, p90]`.
+
 | Mineral | Chokepoint closed (8 wk) | In-window avg | Δ vs baseline |
 |---------|--------------------------|---------------:|--------------:|
-| Li      | (baseline, no crisis)    | $14,354        | — |
-| Li      | Suez Canal               | $13,735        | -4.3% |
-| Li      | Malacca Strait           | $13,201        | -8.0% |
-| Li      | Strait of Hormuz         | $13,906        | -3.1% |
-| Ni      | (baseline)               | $8,997         | — |
-| Ni      | Malacca Strait           | $9,186         | +2.1% |
-| Pt      | (baseline)               | $46,736,359    | — |
-| Pt      | Suez Canal               | $46,736,359    | +0.0% (ceiling-pinned) |
+| Li      | (baseline)               | $14,506 ± 1,096 | — |
+| Li      | Suez Canal               | $14,699 ± 1,390 | +1.6% ± 8.3% [-4.5, +7.9] |
+| Li      | Malacca Strait           | $14,771 ± 1,630 | +2.0% ± 8.2% [-5.8, +11.1] |
+| Li      | Strait of Hormuz         | $14,465 ± 1,545 | -0.2% ± 6.6% [-7.0, +4.7] |
+| Ni      | (baseline)               | $8,855 ± 218    | — |
+| Ni      | Malacca Strait           | $9,389 ± 341    | **+7.0% ± 4.2%** [+4.2, +9.1] |
+| Pt      | (baseline)               | $46,656,432 ± 282,714 | — |
+| Pt      | Suez Canal               | $46,554,600 ± 307,275 | +0.1% ± 1.2% (ceiling-pinned) |
 
-Short 8-week closures produce small impacts. Hormuz/Li and
-Malacca/Li are within seed-noise of zero (Li doesn't transit the
-Persian Gulf, and a single 8-week Malacca closure is short enough
-that Cape re-routes absorb most of it). Ni/Malacca shows a clean
-+5 % because Indonesia → China Ni transit is the main flow through
-the strait. Pt/Suez is unchanged because the Pt baseline is
-already at the structural soft ceiling.
+Short 8-week chokepoint closures produce small impacts that mostly
+straddle zero at N=20. **Only Ni/Malacca shows a statistically
+robust signal** (+7% ± 4%, p10/p90 both positive) — Indonesia →
+China Ni transits the strait so the Cape re-route adds meaningful
+lead time. The Li chokepoint scenarios all have confidence bands
+overlapping zero, confirming the single-seed regen's apparent
+"effects" were noise. Pt/Suez is unchanged because the Pt baseline
+is already at the structural soft ceiling.
 
-For the chokepoint scenarios in particular, the single-seed deltas
-have ±10 % bands at 4 seeds (see ensemble runner section). Ni/Malacca
-appears to be the only chokepoint scenario with a robust signal at
-single-seed; the others would all need ensemble averaging to confirm.
-
-Short 8-week closures remain modest in impact — goods are delayed,
-not lost, and most major routes have alternates. The 26-week and
-52-week 2050 chokepoint scenarios (combined with embargoes) produce
-much larger impacts.
+The 26-week and 52-week 2050 chokepoint scenarios (combined with
+embargoes) produce much larger impacts; see the next section.
 
 Visualization: [`outputs/embargo_comparison.png`](outputs/embargo_comparison.png).
 
@@ -881,38 +883,51 @@ is the longest event in each scenario. Plots:
 [`outputs/2050/scenarios_2050.png`](outputs/2050/scenarios_2050.png),
 [`outputs/2050/scenario_summary.png`](outputs/2050/scenario_summary.png).
 
+N=20 paired ensemble (seeds 42–61). 2050 baseline averages: Li
+$14,328 ± 114, Ni $11,256 ± 78, Pt $44,702,719 ± 140,205.
+
 | Mineral | Scenario | In-window avg | Δ vs baseline |
 |---------|---------|---------------:|--------------:|
-| Li | asia_crisis_2030       | $24,472        | +18.7% |
-| Li | li_nationalism_2035    | $21,850        | +49.6% |
-| Li | multi_crisis_2040      | $10,974        | -10.0% (Russia/Indo not Li producers) |
-| Ni | asia_crisis_2030       | $17,053        | +3.8% (China is processor, not producer) |
-| Ni | indonesia_squeeze_2032 | $14,848        | +12.1% |
-| Ni | multi_crisis_2040      | $8,097         | +16.9% |
-| Pt | asia_crisis_2030       | $46,570,937    | -0.4% (ceiling-pinned) |
-| Pt | sa_pt_crisis_2030      | $46,735,045    | +0.0% (ceiling-pinned) |
-| Pt | multi_crisis_2040      | $46,736,359    | +0.0% (ceiling-pinned) |
+| Li | asia_crisis_2030       | $24,255 ± 696       | **+17.2% ± 5.3%** [+11.3, +23.6] |
+| Li | li_nationalism_2035    | $23,067 ± 522       | **+56.8% ± 6.9%** [+49.5, +68.5] |
+| Li | multi_crisis_2040      | $11,203 ± 431       | -0.9% ± 4.5% [-6.2, +3.4] |
+| Ni | asia_crisis_2030       | $17,927 ± 695       | **+6.3% ± 4.9%** [+1.5, +12.7] |
+| Ni | indonesia_squeeze_2032 | $15,001 ± 471       | **+12.8% ± 5.6%** [+5.8, +19.7] |
+| Ni | multi_crisis_2040      | $8,086 ± 680        | +13.8% ± 11.6% [+6.5, +30.7] |
+| Pt | asia_crisis_2030       | $46,522,697 ± 398,952 | -0.2% ± 0.7% (ceiling-pinned) |
+| Pt | sa_pt_crisis_2030      | $46,544,453 ± 423,377 | -0.1% ± 0.8% (ceiling-pinned) |
+| Pt | multi_crisis_2040      | $46,579,432 ± 300,266 | -0.2% ± 0.6% (ceiling-pinned) |
 
-`li_nationalism_2035` (Chile + Australia 2-year embargoes + Suez
-closure) lifts Li price ~55 % — comparable to the canonical big-3
-embargo at the new dynamics. `asia_crisis_2030` registers a
-larger Li impact than the equivalent embargo-only scenario because
-the chokepoint closure compounds the export-withholding. Ni
-scenarios show smaller deltas under the new dynamics than they did
-under the previous (price-blind) retailer policy: with the EWMA
-retailer, demand contracts during the shock and the system absorbs
-the shortage faster. The Pt scenarios are all ceiling-pinned —
-during the structural shortage window (years 8 – ~22) every
-incremental shock just hits the soft ceiling that was already
-binding. Pt scenarios in the post-2045 window where the price
-finally comes off the ceiling would show different behaviour
-(worth running a `--n-seeds 20` ensemble to confirm).
+**Robust signals** (p10 and p90 both positive, narrow band):
+- `li_nationalism_2035`: +56.8% ± 6.9% — Chile + Australia 2-year
+  embargo plus 1-year Suez closure removes the cheapest Li supply
+  for long enough that the price-responsive capacity expansion
+  can't catch up.
+- `asia_crisis_2030` Li: +17.2% ± 5.3% — China embargo + Malacca/
+  Suez closures hit lithium less than they hit nickel because Li
+  demand is more elastic and substitutes have time to enter.
+- `indonesia_squeeze_2032`: +12.8% ± 5.6% — Indonesian Ni embargo
+  + 6-month Malacca closure; the second-most decisive single-source
+  Ni scenario after multi_crisis_2040.
+- `multi_crisis_2040` Ni: +13.8% ± 11.6% — wide variance because
+  the scenario fires deep in the run when the system has more
+  capacity built out, but mean and lower percentile are clearly
+  positive.
 
-The `multi_crisis_2040` deltas straddle zero / near-zero for some
-mineral × scenario pairs because the one seed used here doesn't
-isolate the scenario signal from background-event noise during the
-window. Run the ensemble (`--n-seeds 20`) for trustworthy
-comparison stats.
+**Pinned signals**:
+- All three Pt scenarios sit at ~0 ± 0.7% because the Pt baseline
+  is already pinned at the structural soft ceiling
+  (8 × marginal-cost) for years ~8 through ~22. Incremental shocks
+  during that window can't push the price higher than the soft
+  ceiling. To see a meaningful Pt scenario response, the shock
+  needs to fire after the price comes off the ceiling
+  (post-2045), which none of the committed 2050 scenarios do.
+
+**Inconclusive**:
+- `multi_crisis_2040` Li: -0.9% ± 4.5% — confidence band straddles
+  zero. Russia and Indonesia aren't significant Li producers, so
+  the embargo doesn't bind; the chokepoint pieces are short
+  enough to be within seed noise.
 
 ## Documentation
 
