@@ -319,10 +319,15 @@ class MineAgent(Agent):
         # (was: gross production_capacity each step, regardless of
         # operational status). Exploration spend tracks production --
         # a mine that doesn't produce this step doesn't grow reserves.
+        # The added tonnage is also booked on the model's
+        # cumulative_reserve_replacement counter so the conservation
+        # diagnostic accounts for the new mineral being introduced.
         cfg = self.model.config
         replacement_rate = cfg.get("reserve_replacement_rate", 0.0)
         if replacement_rate > 0 and output > 0:
-            self.reserves += output * replacement_rate
+            replaced = output * replacement_rate
+            self.reserves += replaced
+            self.model.cumulative_reserve_replacement += replaced
 
         if self.model.is_embargoed(self.jurisdiction):
             self.domestic_stockpile += output

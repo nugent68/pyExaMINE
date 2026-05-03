@@ -65,6 +65,34 @@ class MineralSupplyChainModel(Model):
         self.product_lifetime = config.get("product_lifetime_steps", 25)
         self._eol_initial_this_step = 0.0
 
+        # Mineral mass-balance accounting. Every irreversible loss in
+        # the pipeline is tracked here so a per-step conservation
+        # diagnostic can confirm
+        #   sum(initial_reserves) ==
+        #   Total_Mineral_In_System +
+        #   cumulative_processor_yield_loss +    # set in Processor._process_ore
+        #   cumulative_recovery_loss +           # set in Recycler._sell_recovered_materials
+        #   lost_in_transit_mineral              # set in Transport._drop_shipment
+        # within float tolerance. If the discrepancy ever drifts away
+        # from zero, mass is appearing or disappearing somewhere
+        # untracked -- a regression catches itself in the data column
+        # rather than going silently undetected for years.
+        self.cumulative_processor_yield_loss = 0.0
+        self.cumulative_recovery_loss = 0.0
+        self.lost_in_transit_mineral = 0.0
+        # Reserve replacement adds *new* mineral to the system from
+        # "exploration" each step (= output * reserve_replacement_rate
+        # in MineAgent._produce). It must appear on the LHS of the
+        # conservation equation so the diagnostic doesn't flag a
+        # spurious gain. Tracked here, incremented by the mine.
+        self.cumulative_reserve_replacement = 0.0
+        # Initial total mineral baseline (reserves + every warm-started
+        # pipeline inventory). Snapshotted after all agents are
+        # constructed so the diagnostic measures *deviations from the
+        # warm-started baseline* rather than flagging the warm-starts
+        # themselves as a permanent constant offset.
+        self._initial_total_mineral = 0.0
+
         # Geopolitical event tracking
         self.active_disruptions = {}  # jurisdiction -> remaining_steps
 
@@ -111,6 +139,14 @@ class MineralSupplyChainModel(Model):
         self.current_step = 0
 
         self._load_data_and_create_agents()
+        # Snapshot initial total mineral baseline (reserves + every
+        # warm-started inventory) for the conservation diagnostic.
+        # Done here (not in __init__) because the agents don't exist
+        # until _load_data_and_create_agents runs, and they warm-start
+        # significant inventory in their own __init__ methods (~50 kt
+        # for Li). Capturing the post-warm-start total means the
+        # diagnostic reads zero at step 0 and flags only deviations.
+        self._initial_total_mineral = self.total_mineral_in_system()
         self._setup_data_collector()
 
     # ------------------------------------------------------------------
@@ -743,6 +779,64 @@ class MineralSupplyChainModel(Model):
     # Data collection
     # ------------------------------------------------------------------
 
+    def total_mineral_in_system(self):
+        """Sum of mineral mass currently held in any state in the chain.
+
+        Walks every storage point in the pipeline:
+        - Mine: reserves + pithead_stockpile + domestic_stockpile +
+          production_this_step (offered but not yet shipped)
+        - Transport: in-transit (ore/processed/recycled in mineral tons,
+          finished goods using their embedded mineral content)
+        - Processor: raw_ore_buffer + inventory
+        - Manufacturer: input_inventory + output_inventory_mineral
+        - Retailer: inventory_mineral
+        - EOL: available_eol_pool + every queued deposit not yet matured
+        - Recycler: storage + recovered_pool
+
+        Used by the mass-balance diagnostic to confirm conservation
+        modulo tracked losses (processor yield, recovery, in-transit).
+        """
+        total = 0.0
+        for m in self.mines:
+            total += m.reserves + m.pithead_stockpile + m.domestic_stockpile
+            total += m.production_this_step
+        for t in self.transport_agents:
+            for s in t.in_transit:
+                if s.get('material') in ('ore', 'processed', 'recycled'):
+                    total += s.get('quantity', 0.0)
+                else:
+                    total += s.get('mineral', 0.0)
+        for p in self.processors:
+            total += p.raw_ore_buffer + p.inventory
+        for mfr in self.manufacturers:
+            total += mfr.input_inventory + mfr.output_inventory_mineral
+        for r in self.retailers:
+            total += r.inventory_mineral
+        total += self.available_eol_pool + sum(self.end_of_life_pool.values())
+        for rec in self.recyclers:
+            total += rec.storage + rec.recovered_pool
+        return total
+
+    def mass_balance_discrepancy(self):
+        """Initial total + replacement minus everything accounted for.
+
+        Should be ~0 within float tolerance. Drifts away from zero if
+        any mineral stream is leaking (or duplicating) outside the
+        tracked pipeline + loss buckets. The previous EOL / recycler-
+        backpressure bugs would have shown up here as a steadily
+        growing positive discrepancy (mass disappearing). Reserve
+        replacement is on the source side: exploration introduces new
+        mineral, so it's added to the initial baseline.
+        """
+        accounted = (
+            self.total_mineral_in_system()
+            + self.cumulative_processor_yield_loss
+            + self.cumulative_recovery_loss
+            + self.lost_in_transit_mineral
+        )
+        source = self._initial_total_mineral + self.cumulative_reserve_replacement
+        return source - accounted
+
     def _setup_data_collector(self):
         self.datacollector = DataCollector(
             model_reporters={
@@ -766,6 +860,18 @@ class MineralSupplyChainModel(Model):
                     for p in m.processors
                 ),
                 "Available_EOL_Pool": lambda m: m.available_eol_pool,
+                # Mass-balance diagnostics. Total_Mineral_In_System +
+                # the three cumulative-loss columns should sum to the
+                # initial reserves baseline; Mass_Balance_Discrepancy
+                # reports the residual (should hover at ~0 within float
+                # precision). A persistently growing discrepancy is a
+                # mineral-mass leak somewhere in the pipeline.
+                "Total_Mineral_In_System": lambda m: m.total_mineral_in_system(),
+                "Cumulative_Processor_Yield_Loss": lambda m: m.cumulative_processor_yield_loss,
+                "Cumulative_Recovery_Loss": lambda m: m.cumulative_recovery_loss,
+                "Lost_In_Transit_Mineral": lambda m: m.lost_in_transit_mineral,
+                "Cumulative_Reserve_Replacement": lambda m: m.cumulative_reserve_replacement,
+                "Mass_Balance_Discrepancy": lambda m: m.mass_balance_discrepancy(),
                 "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if a.disruption_counter > 0),
                 "Mothballed_Mines_Count": lambda m: sum(1 for a in m.mines if a.mothballed),
                 "Total_Consumer_Demand_Units": lambda m: sum(a.current_demand for a in m.consumers),

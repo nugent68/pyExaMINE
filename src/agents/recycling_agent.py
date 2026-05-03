@@ -125,8 +125,13 @@ class RecyclingAgent(Agent):
         # recovered material separate means a sit-across-steps shipment
         # (because all processors are full this step) doesn't get
         # double-discounted by recovery_efficiency next step.
+        # The (1 - recovery_efficiency) fraction is a physical recycler
+        # loss (slag, off-gas, residues); booked on the model so the
+        # mass-balance diagnostic stays consistent.
         if self.storage > 0:
-            self.recovered_pool += self.storage * self.recovery_efficiency
+            recovered = self.storage * self.recovery_efficiency
+            self.model.cumulative_recovery_loss += (self.storage - recovered)
+            self.recovered_pool += recovered
             self.storage = 0
 
         if self.recovered_pool <= 0:

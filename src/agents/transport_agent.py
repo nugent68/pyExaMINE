@@ -81,6 +81,9 @@ class TransportAgent(Agent):
     def _deliver_shipments(self):
         current_step = self.model.current_step
         closed_choke = getattr(self.model, 'closed_chokepoints', set())
+        max_deferral = int(
+            self.model.config.get("transport_max_deferral_steps", 26)
+        )
 
         # Iterate over a copy so we can mutate in_transit safely.
         for shipment in list(self.in_transit):
@@ -89,24 +92,36 @@ class TransportAgent(Agent):
 
             origin = shipment.get('origin_jurisdiction', '')
             dest = shipment.get('dest_jurisdiction', '')
-            if (origin in self.disrupted_jurisdictions or
-                    dest in self.disrupted_jurisdictions):
-                shipment['arrival_step'] += 1
-                continue
+            disrupted = (origin in self.disrupted_jurisdictions or
+                         dest in self.disrupted_jurisdictions)
 
             # Per-shipment chokepoint check: if any chokepoint on the
             # route is currently closed, defer one step and retry. This
             # is what implements "Suez closure delays anything routed
             # through Suez until the chokepoint reopens".
             shipment_choke = shipment.get('chokepoints') or []
-            if any(cp in closed_choke for cp in shipment_choke):
+            choked = any(cp in closed_choke for cp in shipment_choke)
+
+            if disrupted or choked:
+                shipment['defer_count'] = shipment.get('defer_count', 0) + 1
+                # Cap the deferral so a permanently-closed chokepoint
+                # doesn't accumulate in-transit material indefinitely.
+                # When the cap binds we drop the shipment and add its
+                # mineral content to the model-level lost_in_transit
+                # counter so mass-balance diagnostics can see the loss.
+                # 26 wks (~6 months) is a defensible default: after
+                # half a year of total route closure, real shippers
+                # cancel the bill of lading and write off the cargo.
+                if shipment['defer_count'] > max_deferral:
+                    self._drop_shipment(shipment, reason='deferral_cap')
+                    continue
                 shipment['arrival_step'] += 1
                 continue
 
             destination = shipment.get('destination')
             if destination is None or not hasattr(destination, 'receive_shipment'):
-                # No one to receive -- drop the shipment but record it.
-                self.in_transit.remove(shipment)
+                # No one to receive -- drop the shipment, count the loss.
+                self._drop_shipment(shipment, reason='no_destination')
                 continue
 
             destination.receive_shipment(
@@ -118,6 +133,24 @@ class TransportAgent(Agent):
             self.delivered_this_step += shipment['quantity']
             self.total_delivered += shipment['quantity']
             self.in_transit.remove(shipment)
+
+    def _drop_shipment(self, shipment, reason):
+        """Drop a shipment and book its mineral content as in-transit loss.
+
+        For ore / processed / recycled shipments the ``quantity`` field
+        IS the mineral tonnage; for finished-goods shipments the
+        ``mineral`` field carries the embedded mineral content. Either
+        way we add the right tonnage to the model's running counter so
+        the mass-balance diagnostic stays consistent with reality.
+        """
+        material = shipment.get('material')
+        if material in ('ore', 'processed', 'recycled'):
+            mineral_tons = shipment.get('quantity', 0.0)
+        else:
+            mineral_tons = shipment.get('mineral', 0.0)
+        if mineral_tons > 0:
+            self.model.lost_in_transit_mineral += mineral_tons
+        self.in_transit.remove(shipment)
 
     def accept_shipment(self, material_type, quantity, destination,
                         origin_jurisdiction='', dest_jurisdiction='',
@@ -156,6 +189,7 @@ class TransportAgent(Agent):
             'dest_jurisdiction': dest_jurisdiction,
             'chokepoints': list(chokepoints) if chokepoints else [],
             'arrival_step': self.model.current_step + int(lead_time),
+            'defer_count': 0,
             'cost': self.cost_per_unit * quantity,
         }
 

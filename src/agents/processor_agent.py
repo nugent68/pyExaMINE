@@ -217,6 +217,10 @@ class ProcessorAgent(Agent):
 
         to_process = min(self.raw_ore_buffer, self.capacity)
         processed = to_process * self.conversion_efficiency
+        # Yield-loss tonnage (1 - efficiency of input) is a real
+        # physical loss to tailings; book it on the model so the
+        # mass-balance diagnostic stays consistent.
+        self.model.cumulative_processor_yield_loss += (to_process - processed)
 
         self.raw_ore_buffer -= to_process
         self.inventory += processed

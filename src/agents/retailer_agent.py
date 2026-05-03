@@ -12,19 +12,26 @@ from mesa import Agent
 class RetailerAgent(Agent):
     """Agent representing a country's retail aggregate using (s,Q) policy.
 
-    The (s, Q) policy parameters scale with the demand-trajectory growth
-    factor: ``reorder_point`` and ``order_quantity`` are properties that
-    recompute each access from the *current* anchored country demand
-    (= 2024 baseline x demand_growth_factor), not the 2024 baseline
-    alone. Without this scaling the policy is sized for the 2024 demand
-    level and starves consumers as demand grows -- a 10x Li demand
-    ramp by 2050 would leave the retailer ordering 10% of what's
-    needed and the fulfillment rate would collapse to ~10%.
+    The (s, Q) policy parameters track an EWMA of *realised* consumer
+    requests rather than a price-blind anchor:
 
-    The anchored growth factor is used (not the consumer's
-    price-elasticity-modulated current_demand) so the (s, Q) policy
-    sizes off the underlying demand trend rather than reacting to
-    short-term price spikes.
+        demand_ewma <- (1-alpha) * demand_ewma + alpha * last_step_requests
+
+    where ``last_step_requests`` is the sum of every consumer's purchase
+    request to this retailer in the previous step (= consumer
+    current_demand limited to local retailers), and ``alpha`` defaults
+    to 0.05 (~13-week half-life). reorder_point and order_quantity are
+    properties that recompute from this EWMA each access.
+
+    The previous policy multiplied the 2024 baseline by
+    demand_growth_factor() -- correct for the long-run demand trend
+    but blind to consumer price elasticity. During an embargo or
+    chokepoint episode, consumers cut purchases (price spike + hard
+    threshold) yet the retailer kept ordering at the full anchored
+    rate, so inventory built mid-shock and the (s,Q) cycle drifted.
+    The EWMA tracks both the trend (via realised volume growing with
+    demand) and the elasticity (via realised volume contracting with
+    price spikes) without explicitly knowing either.
     """
 
     def __init__(self, unique_id, model, country, base_country_demand,
@@ -52,10 +59,18 @@ class RetailerAgent(Agent):
 
         # Inventory policy parameters (sizing inputs; the actual
         # reorder_point / order_quantity are properties that scale
-        # with the demand growth factor each access).
+        # with demand_ewma each access).
         self.base_country_demand = base_country_demand
         self.reorder_mult = reorder_mult
         self.order_mult = order_mult
+
+        # Realised-demand tracker. Initialized to the 2024 baseline so
+        # the policy sizes correctly from step 0 (before any consumer
+        # has had a chance to record a request). _requests_this_step
+        # accumulates inside sell_to_consumer; the EWMA folds it in at
+        # the start of the next retailer.step().
+        self.demand_ewma = base_country_demand
+        self._requests_this_step = 0.0
 
         # Inventory. Warm-start is one current-step order_quantity, which
         # at construction (step 0) equals the 2024-baseline order
@@ -83,12 +98,12 @@ class RetailerAgent(Agent):
     def current_country_demand(self):
         """Current expected per-step product demand for this country.
 
-        Uses the model's anchored demand-growth multiplier rather than
-        the consumer's instantaneous current_demand so the (s, Q)
-        sizing tracks the underlying demand trend instead of getting
-        feedback-distorted by transient price spikes.
+        Returns the EWMA of realised consumer requests. With a 13-week
+        half-life (alpha ~ 0.05) this is slow enough to ignore single-
+        week noise but fast enough to follow real elasticity-driven
+        contractions during multi-month price spikes.
         """
-        return self.base_country_demand * self.model.demand_growth_factor()
+        return self.demand_ewma
 
     @property
     def reorder_point(self):
@@ -100,6 +115,17 @@ class RetailerAgent(Agent):
 
     def step(self):
         """Execute one time step of retailer behavior."""
+        # Fold the previous step's realised consumer requests into the
+        # demand EWMA before resetting per-step counters. Consumers run
+        # in tier 6 (after retailers in tier 5), so the requests we
+        # read here were accumulated by the consumers' last visit --
+        # i.e. the previous step's realised demand.
+        alpha = float(self.model.config.get("retailer_demand_ewma_alpha", 0.05))
+        self.demand_ewma = (
+            (1.0 - alpha) * self.demand_ewma + alpha * self._requests_this_step
+        )
+        self._requests_this_step = 0.0
+
         self.sold_this_step = 0
         self.received_this_step = 0
         self.received_mineral_this_step = 0
@@ -206,6 +232,11 @@ class RetailerAgent(Agent):
         Returns (units_sold, mineral_tons_embedded) so as-built intensity
         travels with the goods to the EOL pool.
         """
+        # Track the realised request volume (whether or not we can
+        # fulfill it) so the demand EWMA reflects what consumers
+        # actually wanted, not just what we managed to ship.
+        if amount > 0:
+            self._requests_this_step += amount
         if self.inventory <= 0:
             self.stockouts += 1
             return 0.0, 0.0
