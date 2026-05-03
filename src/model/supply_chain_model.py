@@ -318,7 +318,15 @@ class MineralSupplyChainModel(Model):
               f"(one per producing country)")
 
     def _create_retailers(self, country_shares):
-        """One retailer per consumer country, sized to that country's demand share."""
+        """One retailer per consumer country, sized to that country's demand share.
+
+        The retailer's reorder_point and order_quantity are properties
+        on RetailerAgent that scale with demand_growth_factor each
+        access -- we pass the 2024 baseline demand and the multipliers,
+        not pre-computed values, so the policy automatically tracks
+        the configured demand trajectory (Li 10x by 2050, Ni 2x, Pt
+        2.4x) instead of starving consumers as demand grows.
+        """
         reorder_mult = self.config.get("retailer_reorder_point_multiplier", 2.0)
         order_mult = self.config.get("retailer_order_quantity_multiplier", 3.0)
         intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
@@ -331,8 +339,9 @@ class MineralSupplyChainModel(Model):
                 unique_id=self.next_id(),
                 model=self,
                 country=country,
-                reorder_point=country_demand * reorder_mult,
-                order_quantity=country_demand * order_mult,
+                base_country_demand=country_demand,
+                reorder_mult=reorder_mult,
+                order_mult=order_mult,
             )
             # Warm-start the embedded mineral content of starting inventory
             # to the baseline manufacturer intensity. Without this, the

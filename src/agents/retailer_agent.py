@@ -10,9 +10,25 @@ from mesa import Agent
 
 
 class RetailerAgent(Agent):
-    """Agent representing a country's retail aggregate using (s,Q) policy."""
+    """Agent representing a country's retail aggregate using (s,Q) policy.
 
-    def __init__(self, unique_id, model, country, reorder_point, order_quantity):
+    The (s, Q) policy parameters scale with the demand-trajectory growth
+    factor: ``reorder_point`` and ``order_quantity`` are properties that
+    recompute each access from the *current* anchored country demand
+    (= 2024 baseline x demand_growth_factor), not the 2024 baseline
+    alone. Without this scaling the policy is sized for the 2024 demand
+    level and starves consumers as demand grows -- a 10x Li demand
+    ramp by 2050 would leave the retailer ordering 10% of what's
+    needed and the fulfillment rate would collapse to ~10%.
+
+    The anchored growth factor is used (not the consumer's
+    price-elasticity-modulated current_demand) so the (s, Q) policy
+    sizes off the underlying demand trend rather than reacting to
+    short-term price spikes.
+    """
+
+    def __init__(self, unique_id, model, country, base_country_demand,
+                 reorder_mult, order_mult):
         """Initialize a RetailerAgent.
 
         Args:
@@ -20,8 +36,13 @@ class RetailerAgent(Agent):
             model: Model instance
             country: Host country (used by routing engine when ordering
                 from manufacturers and serving local consumers)
-            reorder_point: Inventory level that triggers reorder (s parameter)
-            order_quantity: Amount to order when restocking (Q parameter)
+            base_country_demand: 2024 baseline per-step product demand
+                from this country (units/step). Scales over time via
+                ``model.demand_growth_factor()``.
+            reorder_mult: ``reorder_point = current_country_demand *
+                reorder_mult`` (typically 2-3 weeks of demand).
+            order_mult: ``order_quantity = current_country_demand *
+                order_mult`` (typically 3-4 weeks of demand).
         """
         super().__init__(unique_id, model)
 
@@ -29,12 +50,17 @@ class RetailerAgent(Agent):
         self.country = country
         self.label = f"{country}/retail"
 
-        # Inventory policy parameters
-        self.reorder_point = reorder_point
-        self.order_quantity = order_quantity
+        # Inventory policy parameters (sizing inputs; the actual
+        # reorder_point / order_quantity are properties that scale
+        # with the demand growth factor each access).
+        self.base_country_demand = base_country_demand
+        self.reorder_mult = reorder_mult
+        self.order_mult = order_mult
 
-        # Inventory
-        self.inventory = order_quantity  # Start with some inventory
+        # Inventory. Warm-start is one current-step order_quantity, which
+        # at construction (step 0) equals the 2024-baseline order
+        # quantity since demand_growth_factor(0) == 1.
+        self.inventory = self.order_quantity
         # Mineral content embedded in on-hand inventory (tons). Carried
         # as as-built so consumers' EOL deposits are correct even after
         # substitution events drift current intensity downward.
@@ -52,6 +78,25 @@ class RetailerAgent(Agent):
         self.total_sales = 0
         self.received_this_step = 0
         self.received_mineral_this_step = 0
+
+    @property
+    def current_country_demand(self):
+        """Current expected per-step product demand for this country.
+
+        Uses the model's anchored demand-growth multiplier rather than
+        the consumer's instantaneous current_demand so the (s, Q)
+        sizing tracks the underlying demand trend instead of getting
+        feedback-distorted by transient price spikes.
+        """
+        return self.base_country_demand * self.model.demand_growth_factor()
+
+    @property
+    def reorder_point(self):
+        return self.current_country_demand * self.reorder_mult
+
+    @property
+    def order_quantity(self):
+        return self.current_country_demand * self.order_mult
 
     def step(self):
         """Execute one time step of retailer behavior."""
@@ -80,40 +125,68 @@ class RetailerAgent(Agent):
             self._place_order()
 
     def _place_order(self):
-        """Place an order with manufacturers anywhere in the world.
+        """Place an order with manufacturers, region-preferenced.
 
-        Iterates manufacturers (random order so no manufacturer is
-        starved) and dispatches finished-goods shipments through the
-        routing engine. The shipment lands in this retailer's inventory
-        when the transport agent delivers.
+        Tries same-country manufacturers first, then same-region, then
+        the rest of the world. Within each tier, manufacturers are
+        shuffled so no single firm is systematically starved. This
+        mirrors the recycler's region-preferenced sourcing.
+
+        Without region preferencing, orders are split across many
+        long-lead-time foreign manufacturers (e.g. a Chinese retailer
+        random-order would source ~50% from China mfr but the rest from
+        Europe/Korea/Japan with 3-7 week lead times). The on_order
+        sum then treats those long-lead shipments as effectively
+        present, suppressing reorders, while real inventory drains to
+        zero in a 1-2 step window. Region preferencing keeps the
+        actual lead time short so the (s, Q) cycle works as designed.
         """
-        manufacturers = list(self.model.manufacturers)
-        self.model.random_state.shuffle(manufacturers)
-        remaining = self.order_quantity
+        from ..data.routing import COUNTRY_REGION
 
-        for manufacturer in manufacturers:
+        manufacturers = list(self.model.manufacturers)
+        my_region = COUNTRY_REGION.get(self.country, 'Other')
+
+        local = [m for m in manufacturers if m.country == self.country]
+        regional = [
+            m for m in manufacturers
+            if m.country != self.country
+            and COUNTRY_REGION.get(m.country, 'Other') == my_region
+        ]
+        global_rest = [
+            m for m in manufacturers
+            if m.country != self.country
+            and COUNTRY_REGION.get(m.country, 'Other') != my_region
+        ]
+        for tier in (local, regional, global_rest):
+            self.model.random_state.shuffle(tier)
+
+        remaining = self.order_quantity
+        for tier in (local, regional, global_rest):
             if remaining <= 0:
                 break
+            for manufacturer in tier:
+                if remaining <= 0:
+                    break
 
-            available = manufacturer.get_available_output()
-            if available <= 0:
-                continue
+                available = manufacturer.get_available_output()
+                if available <= 0:
+                    continue
 
-            desired = min(remaining, available)
-            actual, mineral = manufacturer.sell_output(desired)
-            if actual <= 0:
-                continue
+                desired = min(remaining, available)
+                actual, mineral = manufacturer.sell_output(desired)
+                if actual <= 0:
+                    continue
 
-            # Dispatch via transport from manufacturer.country to self.country.
-            self.model.dispatch_shipment(
-                material_type='product',
-                quantity=actual,
-                origin_country=manufacturer.country,
-                dest_country=self.country,
-                destination=self,
-                mineral_tons=mineral,
-            )
-            remaining -= actual
+                # Dispatch via transport from manufacturer.country to self.country.
+                self.model.dispatch_shipment(
+                    material_type='product',
+                    quantity=actual,
+                    origin_country=manufacturer.country,
+                    dest_country=self.country,
+                    destination=self,
+                    mineral_tons=mineral,
+                )
+                remaining -= actual
 
     def receive_shipment(self, material_type, quantity, mineral_tons=0.0,
                          origin_jurisdiction=''):

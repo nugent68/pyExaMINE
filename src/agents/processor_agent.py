@@ -118,21 +118,30 @@ class ProcessorAgent(Agent):
         ranked_mines = sorted(mines, key=lambda m: m.extraction_cost)
         in_transit = sum(s['quantity'] for s in self._pending_inbound_ore())
 
-        # Throughput cap: don't accept more feedstock than this step's
-        # processing capacity, less what's already on hand or inbound.
-        throughput_room = self.capacity - self.raw_ore_buffer - in_transit
-
         # Inventory backpressure: how much *more* processed mineral could
         # we tolerate before hitting the inventory ceiling? Convert that
         # back into ore-input terms via conversion_efficiency. The
         # raw_ore_buffer + in_transit have not been processed yet but
         # will be, so they count against the ceiling at full efficiency.
+        #
+        # Backpressure alone is sufficient -- it caps the *eventual*
+        # processed inventory at inventory_cap, naturally limiting how
+        # much ore can be in the pipeline. The previous version also
+        # imposed a per-step throughput cap (`capacity - raw_ore -
+        # in_transit`) that double-counted in_transit and clipped the
+        # pipeline to ~1 week of capacity. With a 3-week ore lead time
+        # from mines, that throttled actual processing to
+        # capacity / (1 + lead_time) ~ 25-30% of nameplate -- so
+        # processors couldn't keep manufacturers fed even though mines
+        # were producing 4x demand. Removing the per-step cap lets the
+        # pipeline grow naturally to ~ (inventory_cap_weeks -
+        # safety_weeks) of input throughput.
         eff = self.conversion_efficiency
         committed_processed = self.inventory + (self.raw_ore_buffer + in_transit) * eff
         headroom_processed = max(0.0, self.inventory_cap - committed_processed)
         backpressure_room = headroom_processed / eff if eff > 0 else 0.0
 
-        remaining_capacity = max(0.0, min(throughput_room, backpressure_room))
+        remaining_capacity = max(0.0, backpressure_room)
 
         for mine in ranked_mines:
             if remaining_capacity <= 0:

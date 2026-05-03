@@ -78,8 +78,10 @@ NICKEL_CONFIG = {
     # price ~$40k pre-battery mineral content.
     "consumer_product_base_price": 40000,
     
-    # Retailer inventory policy
-    "retailer_reorder_point_multiplier": 2.0,
+    # Retailer inventory policy. Multipliers in weeks of *current*
+    # per-step demand (the policy scales with demand-growth factor).
+    # Reorder point covers ~3 wk ship lead time + 1 wk safety stock.
+    "retailer_reorder_point_multiplier": 4.0,
     "retailer_order_quantity_multiplier": 3.0,
     "retailer_lead_time": 3,
     

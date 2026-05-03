@@ -83,8 +83,13 @@ LITHIUM_CONFIG = {
     # (mineral + base) rather than the bare mineral price.
     "consumer_product_base_price": 40000,
     
-    # Retailer inventory policy
-    "retailer_reorder_point_multiplier": 2.0,  # times average demand
+    # Retailer inventory policy. The (s, Q) policy now scales with the
+    # demand-trajectory growth factor, so multipliers are interpreted in
+    # weeks of *current* per-step demand. Reorder point covers the ship
+    # lead time (~3 wk China->everywhere) plus 1 wk of safety stock so
+    # the retailer doesn't stock out between order placement and
+    # shipment arrival.
+    "retailer_reorder_point_multiplier": 4.0,  # weeks of current demand
     "retailer_order_quantity_multiplier": 3.0,
     "retailer_lead_time": 3,
     

@@ -79,8 +79,13 @@ PLATINUM_CONFIG = {
     # mineral cost in the consumer-facing good.
     "consumer_product_base_price": 30000,
     
-    # Retailer inventory policy
-    "retailer_reorder_point_multiplier": 2.5,  # Higher safety stock
+    # Retailer inventory policy. Multipliers in weeks of *current*
+    # per-step demand (the policy scales with demand-growth factor).
+    # Pt uses a slightly larger reorder point + order quantity than
+    # Li/Ni to reflect the higher transport security cost (high-value
+    # cargo) -- carrying a few extra weeks of buffer is cheap relative
+    # to insuring extra shipments.
+    "retailer_reorder_point_multiplier": 5.0,
     "retailer_order_quantity_multiplier": 3.5,
     "retailer_lead_time": 4,
     
