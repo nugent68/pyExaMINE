@@ -81,6 +81,26 @@ class ManufacturerAgent(Agent):
         self._inbound_qty = {}     # material -> running total tons
         self._inbound_count = {}   # material -> count of in-flight shipments
 
+        # Cache config values referenced from step() / helpers (config
+        # is immutable post-construction).
+        cfg = model.config
+        self._cfg_substitution_threshold = float(
+            cfg.get("substitution_price_threshold", model.initial_price * 1.5)
+        )
+        self._cfg_substitution_revert_threshold = float(
+            cfg.get("substitution_revert_threshold", model.initial_price * 0.667)
+        )
+        self._cfg_substitution_trigger_steps = int(
+            cfg.get("substitution_trigger_steps", 10)
+        )
+        self._cfg_substitution_revert_trigger_steps = int(
+            cfg.get("substitution_revert_trigger_steps", 26)
+        )
+        self._cfg_substitution_rate = float(cfg.get("substitution_rate", 0.05))
+        self._cfg_substitution_revert_rate = float(cfg.get("substitution_revert_rate", 0.03))
+        self._cfg_max_substitution = float(cfg.get("max_substitution", 0.30))
+        self._cfg_order_rate = float(cfg.get("manufacturer_order_rate", 0.5))
+
     @property
     def effective_capacity(self):
         """Production capacity scaled by the model's demand-growth factor.
@@ -136,45 +156,30 @@ class ManufacturerAgent(Agent):
         does. The two thresholds form a dead zone (default ~0.67x to
         1.5x of initial price) inside which both counters decay.
         """
-        cfg = self.model.config
-        threshold = cfg.get(
-            "substitution_price_threshold",
-            self.model.initial_price * 1.5,
-        )
-        revert_threshold = cfg.get(
-            "substitution_revert_threshold",
-            self.model.initial_price * 0.667,
-        )
-        trigger_steps = cfg.get("substitution_trigger_steps", 10)
-        revert_trigger_steps = cfg.get("substitution_revert_trigger_steps", 26)
-
         price = self.model.current_price
-        if price > threshold:
+        if price > self._cfg_substitution_threshold:
             self.high_price_counter += 1
             self.low_price_counter = max(0, self.low_price_counter - 1)
-        elif price < revert_threshold:
+        elif price < self._cfg_substitution_revert_threshold:
             self.low_price_counter += 1
             self.high_price_counter = max(0, self.high_price_counter - 1)
         else:
             self.high_price_counter = max(0, self.high_price_counter - 1)
             self.low_price_counter = max(0, self.low_price_counter - 1)
 
-        if self.high_price_counter >= trigger_steps:
+        if self.high_price_counter >= self._cfg_substitution_trigger_steps:
             self._invest_in_substitution()
             self.high_price_counter = 0
-        elif self.low_price_counter >= revert_trigger_steps:
+        elif self.low_price_counter >= self._cfg_substitution_revert_trigger_steps:
             self._revert_substitution()
             self.low_price_counter = 0
 
     def _invest_in_substitution(self):
         """Invest in R&D to reduce mineral intensity."""
-        max_substitution = self.model.config.get("max_substitution", 0.30)
-        substitution_rate = self.model.config.get("substitution_rate", 0.05)
-
-        if self.substitution_investment < max_substitution:
+        if self.substitution_investment < self._cfg_max_substitution:
             self.substitution_investment = min(
-                self.substitution_investment + substitution_rate,
-                max_substitution,
+                self.substitution_investment + self._cfg_substitution_rate,
+                self._cfg_max_substitution,
             )
             self.mineral_intensity = (
                 self.initial_mineral_intensity * (1 - self.substitution_investment)
@@ -194,9 +199,8 @@ class ManufacturerAgent(Agent):
         """
         if self.substitution_investment <= 0:
             return
-        revert_rate = self.model.config.get("substitution_revert_rate", 0.03)
         self.substitution_investment = max(
-            0.0, self.substitution_investment - revert_rate,
+            0.0, self.substitution_investment - self._cfg_substitution_revert_rate,
         )
         self.mineral_intensity = (
             self.initial_mineral_intensity * (1 - self.substitution_investment)
@@ -227,8 +231,7 @@ class ManufacturerAgent(Agent):
         if minerals_needed <= 0:
             return
 
-        order_rate = self.model.config.get("manufacturer_order_rate", 0.5)
-        order_amount = minerals_needed * order_rate
+        order_amount = minerals_needed * self._cfg_order_rate
 
         processors = list(self.model.processors)
         self.model.random_state.shuffle(processors)

@@ -61,6 +61,12 @@ class TransportAgent(Agent):
         self.delivered_this_step = 0.0
         self.total_delivered = 0.0
 
+        # Cache config value referenced inside _deliver_shipments
+        # (config is immutable post-construction).
+        self._cfg_max_deferral_steps = int(
+            model.config.get("transport_max_deferral_steps", 26)
+        )
+
     @staticmethod
     def _bump_inbound(destination, material, quantity, sign):
         """Adjust the destination's pending-inbound counters by ``sign``.
@@ -99,15 +105,20 @@ class TransportAgent(Agent):
         self._deliver_shipments()
 
     def _deliver_shipments(self):
-        current_step = self.model.current_step
-        closed_choke = getattr(self.model, 'closed_chokepoints', set())
-        max_deferral = int(
-            self.model.config.get("transport_max_deferral_steps", 26)
-        )
+        """Walk in_transit once and rebuild it with the survivors.
 
-        # Iterate over a copy so we can mutate in_transit safely.
-        for shipment in list(self.in_transit):
+        Was previously ``for s in list(in_transit): ... in_transit.remove(s)``
+        which is O(n^2) because list.remove scans on each call. The
+        single-pass rebuild below is O(n) and produces in_transit in
+        the same surviving order.
+        """
+        current_step = self.model.current_step
+        closed_choke = getattr(self.model, 'closed_chokepoints', {})
+        max_deferral = self._cfg_max_deferral_steps
+        survivors = []
+        for shipment in self.in_transit:
             if shipment['arrival_step'] > current_step:
+                survivors.append(shipment)
                 continue
 
             origin = shipment.get('origin_jurisdiction', '')
@@ -133,15 +144,16 @@ class TransportAgent(Agent):
                 # half a year of total route closure, real shippers
                 # cancel the bill of lading and write off the cargo.
                 if shipment['defer_count'] > max_deferral:
-                    self._drop_shipment(shipment, reason='deferral_cap')
-                    continue
+                    self._drop_shipment_no_remove(shipment)
+                    continue   # not a survivor
                 shipment['arrival_step'] += 1
+                survivors.append(shipment)
                 continue
 
             destination = shipment.get('destination')
             if destination is None or not hasattr(destination, 'receive_shipment'):
                 # No one to receive -- drop the shipment, count the loss.
-                self._drop_shipment(shipment, reason='no_destination')
+                self._drop_shipment_no_remove(shipment)
                 continue
 
             destination.receive_shipment(
@@ -154,16 +166,22 @@ class TransportAgent(Agent):
             self.total_delivered += shipment['quantity']
             self._bump_inbound(destination, shipment['material'],
                                shipment['quantity'], -1)
-            self.in_transit.remove(shipment)
+            # delivered shipments are not survivors
 
-    def _drop_shipment(self, shipment, reason):
-        """Drop a shipment and book its mineral content as in-transit loss.
+        self.in_transit = survivors
+
+    def _drop_shipment_no_remove(self, shipment):
+        """Book mineral content as in-transit loss; caller manages in_transit.
+
+        Splits the bookkeeping (mass-balance counter + inbound counter
+        decrement) from the list-membership management. ``_deliver_shipments``
+        rebuilds ``in_transit`` in a single pass and simply omits dropped
+        shipments from the survivors list, so removing-by-value here would
+        be a redundant O(n) call.
 
         For ore / processed / recycled shipments the ``quantity`` field
         IS the mineral tonnage; for finished-goods shipments the
-        ``mineral`` field carries the embedded mineral content. Either
-        way we add the right tonnage to the model's running counter so
-        the mass-balance diagnostic stays consistent with reality.
+        ``mineral`` field carries the embedded mineral content.
         """
         material = shipment.get('material')
         if material in ('ore', 'processed', 'recycled'):
@@ -176,7 +194,6 @@ class TransportAgent(Agent):
                            shipment.get('material'),
                            shipment.get('quantity', 0.0),
                            -1)
-        self.in_transit.remove(shipment)
 
     def accept_shipment(self, material_type, quantity, destination,
                         origin_jurisdiction='', dest_jurisdiction='',

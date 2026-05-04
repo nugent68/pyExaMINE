@@ -89,6 +89,13 @@ class ProcessorAgent(Agent):
         self._inbound_qty = {}     # material -> running total tons
         self._inbound_count = {}   # material -> count of in-flight shipments
 
+        # Cache config values used in step() (immutable post-init).
+        cfg = self.model.config
+        self._cfg_steps_per_year = int(cfg.get("steps_per_year", 52))
+        self._cfg_capacity_growth_per_year = float(
+            cfg.get("processor_capacity_growth_per_year", 0.0)
+        )
+
     def step(self):
         """Execute one time step of processor behavior."""
         self.processed_this_step = 0
@@ -111,11 +118,8 @@ class ProcessorAgent(Agent):
         #    at 2024 levels and creates an artificial mid-stream
         #    bottleneck. Growth is compounded per step (sticky like
         #    mines, since refining capacity isn't easily torn down).
-        cfg = self.model.config
-        steps_per_year = cfg.get("steps_per_year", 52)
-        cap_growth_yr = cfg.get("processor_capacity_growth_per_year", 0.0)
-        if cap_growth_yr > 0:
-            mult = 1.0 + cap_growth_yr / steps_per_year
+        if self._cfg_capacity_growth_per_year > 0:
+            mult = 1.0 + self._cfg_capacity_growth_per_year / self._cfg_steps_per_year
             self.capacity *= mult
             self.output_capacity *= mult
             self.safety_stock *= mult

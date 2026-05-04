@@ -515,12 +515,24 @@ class MineralSupplyChainModel(Model):
               f"per country)")
 
     def _create_transport(self, fleet_data):
-        """Create per-country transport agents from the fleet table."""
+        """Create per-country transport agents from the fleet table.
+
+        Builds two indexes for ``select_transport``:
+
+          ``_transport_by_mode``         : mode -> list[TransportAgent]
+          ``_transport_by_mode_country`` : (mode, country) -> list[TransportAgent]
+
+        Mode and country are immutable on TransportAgent, so these
+        indexes don't need to be rebuilt later. Together they replace
+        what was an O(fleet) filter on every dispatch.
+        """
         costs = {
             'ship':  self.config.get("transport_cost_ship", 10),
             'rail':  self.config.get("transport_cost_rail", 25),
             'truck': self.config.get("transport_cost_truck", 50),
         }
+        self._transport_by_mode: dict = {}
+        self._transport_by_mode_country: dict = {}
         for entry in fleet_data:
             country = entry['country']
             mode = entry['mode']
@@ -534,6 +546,8 @@ class MineralSupplyChainModel(Model):
                     capacity=entry['capacity_per_agent'],
                 )
                 self.transport_agents.append(t)
+                self._transport_by_mode.setdefault(mode, []).append(t)
+                self._transport_by_mode_country.setdefault((mode, country), []).append(t)
         print(f"Created {len(self.transport_agents)} transport agents across "
               f"{len({a.country for a in self.transport_agents})} countries")
 
@@ -546,16 +560,18 @@ class MineralSupplyChainModel(Model):
 
         Returns the chosen agent, or None if the fleet is empty.
 
-        If no agent of ``mode`` exists *anywhere* in the fleet (a data
-        problem -- e.g. routing returns 'rail' but no rail agent was
-        loaded), we fall back to a mode-agnostic pick so the simulation
-        keeps running, but emit a one-time warning per missing mode so
-        the gap is visible. Previously this fallback was silent and a
-        ship route could end up carried by a truck agent without notice.
+        Uses the (mode) and (mode, country) indexes built in
+        ``_create_transport`` so each call is two dict lookups +
+        ``random_state.choice`` instead of two filter passes over the
+        fleet. If no agent of ``mode`` exists *anywhere* in the fleet
+        (a data problem -- e.g. routing returns 'rail' but no rail
+        agent was loaded), we fall back to a mode-agnostic pick so the
+        simulation keeps running, but emit a one-time warning per
+        missing mode so the gap is visible.
         """
         if not self.transport_agents:
             return None
-        mode_pool = [t for t in self.transport_agents if t.mode == mode]
+        mode_pool = self._transport_by_mode.get(mode)
         if not mode_pool:
             if not hasattr(self, '_warned_missing_modes'):
                 self._warned_missing_modes = set()
@@ -566,9 +582,9 @@ class MineralSupplyChainModel(Model):
                     f"will fall back to a mode-agnostic carrier."
                 )
                 self._warned_missing_modes.add(mode)
-            mode_pool = list(self.transport_agents)
+            mode_pool = self.transport_agents
         if prefer_country:
-            local = [t for t in mode_pool if t.country == prefer_country]
+            local = self._transport_by_mode_country.get((mode, prefer_country))
             if local:
                 return self.random_state.choice(local)
         return self.random_state.choice(mode_pool)

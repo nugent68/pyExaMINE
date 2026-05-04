@@ -118,6 +118,43 @@ class MineAgent(Agent):
         # which is the correct merit-order behaviour.
         self.high_price_capex_counter = 0
 
+        # Cache config values referenced from step() / helpers. Config is
+        # immutable post-construction so reading once per agent at init
+        # saves a per-step dict.get for each of these knobs across every
+        # mine. Names mirror the original config keys for clarity.
+        cfg = model.config
+        self._cfg_steps_per_year = int(cfg.get("steps_per_year", 52))
+        self._cfg_cap_growth_base = float(cfg.get("mine_capacity_growth_per_year", 0.0))
+        self._cfg_cap_growth_high = float(
+            cfg.get("mine_capacity_growth_per_year_high", self._cfg_cap_growth_base)
+        )
+        self._cfg_expansion_threshold_mult = float(
+            cfg.get("mine_expansion_price_threshold", 2.0)
+        )
+        self._cfg_expansion_trigger_steps = int(
+            cfg.get("mine_expansion_trigger_steps", 52)
+        )
+        self._cfg_disruption_probability = float(
+            cfg.get("mine_disruption_probability", 0.02)
+        )
+        self._cfg_disruption_duration_min = int(cfg.get("disruption_duration_min", 3))
+        self._cfg_disruption_duration_max = int(cfg.get("disruption_duration_max", 5))
+        self._cfg_restart_margin = float(cfg.get("mine_restart_margin", 1.2))
+        self._cfg_cold_restart_lag = int(cfg.get("mine_restart_lag_steps", 26))
+        self._cfg_warm_restart_lag = int(cfg.get("mine_warm_restart_lag_steps", 12))
+        self._cfg_warm_window = int(cfg.get("mine_warm_restart_window_steps", 52))
+        self._cfg_mothball_trigger_steps = int(cfg.get("mothball_trigger_steps", 13))
+        self._cfg_cash_cost_fraction = float(cfg.get("mine_cash_cost_fraction", 0.65))
+        self._cfg_reserve_replacement_rate = float(cfg.get("reserve_replacement_rate", 0.0))
+        self._cfg_post_embargo_release_steps = max(
+            1, int(cfg.get("post_embargo_release_steps", 26))
+        )
+        # Utilization curve knobs.
+        self._cfg_util_baseline = float(cfg.get("mine_baseline_utilization", 0.75))
+        self._cfg_util_min = float(cfg.get("mine_min_utilization", 0.5))
+        self._cfg_util_max = float(cfg.get("mine_max_utilization", 1.0))
+        self._cfg_util_ratio_max = float(cfg.get("mine_max_utilization_ratio", 2.5))
+
     @property
     def operational(self):
         """True iff the mine is currently producing."""
@@ -140,22 +177,9 @@ class MineAgent(Agent):
         #    flips the per-step rate from baseline to "high". Reverts to
         #    baseline when the counter relaxes; already-built capacity
         #    stays (you don't unbuild a shaft).
-        cfg = self.model.config
-        steps_per_year = cfg.get("steps_per_year", 52)
-        base_growth_yr = cfg.get("mine_capacity_growth_per_year", 0.0)
-        high_growth_yr = cfg.get(
-            "mine_capacity_growth_per_year_high", base_growth_yr,
-        )
-        expansion_threshold_mult = float(
-            cfg.get("mine_expansion_price_threshold", 2.0)
-        )
-        expansion_trigger_steps = int(
-            cfg.get("mine_expansion_trigger_steps", 52)
-        )
-
         price = self.model.current_price
         if (self.extraction_cost > 0
-                and price > self.extraction_cost * expansion_threshold_mult):
+                and price > self.extraction_cost * self._cfg_expansion_threshold_mult):
             self.high_price_capex_counter += 1
         else:
             self.high_price_capex_counter = max(
@@ -163,13 +187,13 @@ class MineAgent(Agent):
             )
 
         cap_growth_yr = (
-            high_growth_yr
-            if self.high_price_capex_counter >= expansion_trigger_steps
-            else base_growth_yr
+            self._cfg_cap_growth_high
+            if self.high_price_capex_counter >= self._cfg_expansion_trigger_steps
+            else self._cfg_cap_growth_base
         )
 
         if cap_growth_yr > 0 and self.operational and self.reserves > 0:
-            self.production_capacity *= (1.0 + cap_growth_yr / steps_per_year)
+            self.production_capacity *= (1.0 + cap_growth_yr / self._cfg_steps_per_year)
 
         # 1. Carry forward any unsold production from last step into the
         #    pithead stockpile before resetting per-step counters. This
@@ -209,7 +233,7 @@ class MineAgent(Agent):
         # Random disruption check (uses the model's seeded RNG so runs
         # are reproducible from the seed).
         rng = self.model.random_state
-        if rng.random() < self.model.config.get("mine_disruption_probability", 0.02):
+        if rng.random() < self._cfg_disruption_probability:
             self._trigger_disruption()
             return
 
@@ -240,23 +264,16 @@ class MineAgent(Agent):
         #     rehiring + recommissioning.
         #   - Restart aborts if price falls back below the threshold
         #     during the lag.
-        cfg = self.model.config
-        restart_margin = cfg.get("mine_restart_margin", 1.2)
-        cold_restart_lag = int(cfg.get("mine_restart_lag_steps", 26))
-        warm_restart_lag = int(cfg.get("mine_warm_restart_lag_steps", 12))
-        warm_window = int(cfg.get("mine_warm_restart_window_steps", 52))
-        trigger_steps = int(cfg.get("mothball_trigger_steps", 13))
-        cash_cost_fraction = float(cfg.get("mine_cash_cost_fraction", 0.65))
-        cash_cost = self.extraction_cost * cash_cost_fraction
+        cash_cost = self.extraction_cost * self._cfg_cash_cost_fraction
         price = self.model.current_price
 
         if self.mothballed:
-            if price > self.extraction_cost * restart_margin:
+            if price > self.extraction_cost * self._cfg_restart_margin:
                 if self.restart_counter <= 0:
                     steps_since = self.model.current_step - self.last_mothball_step
                     effective_lag = (
-                        warm_restart_lag if steps_since <= warm_window
-                        else cold_restart_lag
+                        self._cfg_warm_restart_lag if steps_since <= self._cfg_warm_window
+                        else self._cfg_cold_restart_lag
                     )
                     self.restart_counter = max(1, effective_lag)
                 self.restart_counter -= 1
@@ -272,7 +289,7 @@ class MineAgent(Agent):
         else:
             if price < cash_cost:
                 self.low_price_counter += 1
-                if self.low_price_counter >= trigger_steps:
+                if self.low_price_counter >= self._cfg_mothball_trigger_steps:
                     self.mothballed = True
                     self.last_mothball_step = self.model.current_step
                     self.restart_counter = 0
@@ -322,10 +339,8 @@ class MineAgent(Agent):
         # The added tonnage is also booked on the model's
         # cumulative_reserve_replacement counter so the conservation
         # diagnostic accounts for the new mineral being introduced.
-        cfg = self.model.config
-        replacement_rate = cfg.get("reserve_replacement_rate", 0.0)
-        if replacement_rate > 0 and output > 0:
-            replaced = output * replacement_rate
+        if self._cfg_reserve_replacement_rate > 0 and output > 0:
+            replaced = output * self._cfg_reserve_replacement_rate
             self.reserves += replaced
             self.model.cumulative_reserve_replacement += replaced
 
@@ -353,18 +368,14 @@ class MineAgent(Agent):
         the factor lands at 1.0 and aggregate output matches the
         original USGS figure.
         """
-        cfg = self.model.config
-        baseline = cfg.get("mine_baseline_utilization", 0.75)
-        umin = cfg.get("mine_min_utilization", 0.5)
-        umax = cfg.get("mine_max_utilization", 1.0)
-        ratio_max = cfg.get("mine_max_utilization_ratio", 2.5)
-
         if self.extraction_cost <= 0:
             # Pathological config -- pin to baseline so we don't divide by 0.
             return 1.0
 
-        price = self.model.current_price
-        ratio = price / self.extraction_cost
+        ratio = self.model.current_price / self.extraction_cost
+        umin = self._cfg_util_min
+        umax = self._cfg_util_max
+        ratio_max = self._cfg_util_ratio_max
 
         if ratio <= 1.0:
             utilization = umin
@@ -373,6 +384,7 @@ class MineAgent(Agent):
         else:
             utilization = umin + (umax - umin) * (ratio - 1.0) / (ratio_max - 1.0)
 
+        baseline = self._cfg_util_baseline
         return utilization / baseline if baseline > 0 else 1.0
 
     def _release_stockpile(self):
@@ -391,11 +403,10 @@ class MineAgent(Agent):
         decay (~63% drained in ``release_steps`` steps; the dead
         "drain remainder" branch never triggered).
         """
-        release_steps = max(
-            1, int(self.model.config.get("post_embargo_release_steps", 26))
-        )
         if self._release_chunk_size <= 0:
-            self._release_chunk_size = self.domestic_stockpile / release_steps
+            self._release_chunk_size = (
+                self.domestic_stockpile / self._cfg_post_embargo_release_steps
+            )
         chunk = min(self._release_chunk_size, self.domestic_stockpile)
         self.domestic_stockpile -= chunk
         self.production_this_step += chunk
@@ -415,11 +426,11 @@ class MineAgent(Agent):
         steps). Without this, a random roll during a major embargo
         could quietly halve the modeled outage window.
         """
-        duration_min = self.model.config.get("disruption_duration_min", 3)
-        duration_max = self.model.config.get("disruption_duration_max", 5)
         rng = self.model.random_state
         self.disruption_counter = max(
-            self.disruption_counter, rng.randint(duration_min, duration_max),
+            self.disruption_counter,
+            rng.randint(self._cfg_disruption_duration_min,
+                        self._cfg_disruption_duration_max),
         )
 
     def apply_geopolitical_disruption(self, duration):

@@ -99,6 +99,11 @@ class RetailerAgent(Agent):
         self._inbound_qty = {}     # material -> running total units
         self._inbound_count = {}   # material -> count of in-flight shipments
 
+        # Cache the step()'s only config read.
+        self._cfg_demand_ewma_alpha = float(
+            model.config.get("retailer_demand_ewma_alpha", 0.05)
+        )
+
     @property
     def current_country_demand(self):
         """Current expected per-step product demand for this country.
@@ -125,7 +130,7 @@ class RetailerAgent(Agent):
         # in tier 6 (after retailers in tier 5), so the requests we
         # read here were accumulated by the consumers' last visit --
         # i.e. the previous step's realised demand.
-        alpha = float(self.model.config.get("retailer_demand_ewma_alpha", 0.05))
+        alpha = self._cfg_demand_ewma_alpha
         self.demand_ewma = (
             (1.0 - alpha) * self.demand_ewma + alpha * self._requests_this_step
         )

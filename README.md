@@ -587,6 +587,37 @@ Each simulation generates:
    - `{scenario}/{mineral}_ensemble_band.png` — median + p10–p90 band
      vs baseline ensemble.
 
+## Performance
+
+A single 1352-step (2050-horizon) Lithium run with one political embargo
+takes **~18 seconds** on a single core. A 20-seed ensemble of the same
+scenario runs in **~53 seconds** on a 10-physical-core machine using
+`xargs -P 10` or the parallel runner in
+[scripts/regenerate_outputs.py](scripts/regenerate_outputs.py).
+
+```bash
+# 20-seed ensemble of the canonical scenarios (auto-parallel by seed)
+uv run python scripts/regenerate_outputs.py --n-seeds 20
+
+# Single-seed regeneration of all committed outputs (sequential)
+uv run python scripts/regenerate_outputs.py --n-seeds 1
+```
+
+Per-seed paths through the model are stochastic (random scheduler order,
+disruption rolls, region-tier shuffles). For analysis use the ensemble
+mean/percentile output rather than reading a single seed; published
+canonical outputs under `outputs/2050/` use N=20.
+
+The hot path is now dominated by the `random.shuffle` calls that
+implement the load-balancing across manufacturers / processors / retailers
+(intentional model behavior, not a bottleneck to remove). All
+high-cost per-step bookkeeping (in-transit shipment scans, repeated
+config lookups, redundant DataCollector walks, list reordering) has been
+indexed or cached on the model side. The result is roughly **3.7×
+faster per-run** and **3.4× faster ensembles** versus an earlier code
+path that walked transport / processor / manufacturer lists from
+scratch each step.
+
 ## Model Behavior
 
 ### Demand Trajectory
