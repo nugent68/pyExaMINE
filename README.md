@@ -731,7 +731,7 @@ ensemble medians + bands, run `--n-seeds 20`.)
 |---|---:|---:|---:|---:|---:|---:|
 | Lithium  | $14,895 / t        | ±$4,501     |  6.6% |  0%   | 0 / 30  | 91.2% |
 | Nickel   | $11,406 / t        | ±$4,941     |  3.2% |  0%   | 3 / 29  | 90.3% |
-| Platinum | $45,368,970 / t    | ±$2,389,996 |  3.3% | 20%   | 0 / 18  | 63.0% |
+| Platinum | $39,888,260 / t    | ±$4,786,485 |  2.4% | 20%   | 0 / 18  | 63.5% |
 
 Mothballed counts are out of the per-mineral mine total (Li 30, Ni 29,
 Pt 18 facilities). The narrative under NetZero demand:
@@ -750,17 +750,21 @@ Pt 18 facilities). The narrative under NetZero demand:
   sustained-pressure mothball trigger now fires on ~3 of 29 mines
   on average — mirroring the real 2024 wave of Australian Ni
   shutdowns under Indonesian oversupply.
-- **Platinum** stays structurally constrained. The Bushveld base
-  grows under the price-responsive expansion mechanic
-  (1 %/yr → 5 %/yr above the threshold) and the soft ceiling pin
-  breaks in the final ~25 % of the run as cumulative compounding
-  catches up — but cumulative fulfillment is still ~62 % because
-  most of the 24-yr demand was already in flight before the ramp
-  could compound. The substitution counter saturates at the 20 %
-  cap by mid-run, with volatility ±$2.2 M/t (lower than before —
-  the soft-ceiling pin damps the random walk). Ensemble runs (try
-  `--n-seeds 20`) show that the structural Pt gap is the most
-  robust signal in the model.
+- **Platinum** is supply-constrained early but the price-responsive
+  expansion mechanic (1 %/yr → 8 %/yr above the threshold) closes
+  the gap by mid-run. The price hits an **analytical equilibrium**
+  at $46.7 M/t for the first ~7 years (this is the imbalance-
+  saturated equilibrium, not the soft ceiling: when the per-step
+  imbalance push is capped at +8 % and the anchor pulls toward the
+  highest-cost active mine's $21 M/t, the equilibrium settles at
+  `MC × exp(max_step/anchor) = $21M × exp(0.8) = $46.74 M`).
+  After ~year 7 the cumulative 8 %/yr capacity expansion (~$180 →
+  $565 t/yr nameplate by 2050) catches the demand curve and the
+  price descends in steps to ~$33–35 M/t by 2050. Substitution
+  saturates at the 20 % cap during the early plateau. Bumping the
+  high-growth knob from 5 %/yr to 8 %/yr (the previous value left
+  the plateau binding through year 22) is the single change that
+  most reshapes Pt's trajectory.
 
 Recycling rates emerge in the second half of the run as the EOL
 stream from the realistic 10–12 yr product-lifetime delay starts to
@@ -833,8 +837,18 @@ a much larger response.
 
 | Scenario | In-window avg ($/t) | Δ vs baseline |
 |----------|--------------------:|--------------:|
-| Pt baseline             | $46,653,651 ± 117,419 | — |
-| Pt SA embargo, 1 yr     | $46,676,492 ± 124,810 | +0.3% ± 0.7% (ceiling-pinned) |
+| Pt baseline             | $38,386,440 ± 729,210 | — |
+| Pt SA embargo, 1 yr     | $38,227,412 ± 714,996 | -0.4% ± 3.2% (off-plateau, noise) |
+
+The Pt SA embargo at year 12 now lands AFTER the early plateau has
+broken (capacity has caught demand by ~year 7 under the 8 %/yr
+high-growth rate), so the embargo hits a roughly-balanced market
+where removing the largest producer can be partially absorbed by
+remaining capacity + substitution + recycling. In-window deltas
+straddle zero. Embargo scenarios firing during years 0–7 (when the
+price is still at the analytical plateau) would still show ~0 %
+deltas because the system is already at the imbalance-saturation
+equilibrium.
 
 ## Chokepoint-crisis scenarios (seed 42, 8-week closure at step 624)
 
@@ -858,8 +872,8 @@ step 624. Reported as `mean Δ ± std [p10, p90]`.
 | Li      | Strait of Hormuz         | $14,465 ± 1,545 | -0.2% ± 6.6% [-7.0, +4.7] |
 | Ni      | (baseline)               | $8,855 ± 218    | — |
 | Ni      | Malacca Strait           | $9,389 ± 341    | **+7.0% ± 4.2%** [+4.2, +9.1] |
-| Pt      | (baseline)               | $46,656,432 ± 282,714 | — |
-| Pt      | Suez Canal               | $46,554,600 ± 307,275 | +0.1% ± 1.2% (ceiling-pinned) |
+| Pt      | (baseline)               | $38,553,200 ± 1,090,500 | — |
+| Pt      | Suez Canal               | $38,068,486 ± 1,075,611 | -1.3% ± 3.3% (off-plateau, noise) |
 
 Short 8-week chokepoint closures produce small impacts that mostly
 straddle zero at N=20. **Only Ni/Malacca shows a statistically
@@ -884,7 +898,7 @@ is the longest event in each scenario. Plots:
 [`outputs/2050/scenario_summary.png`](outputs/2050/scenario_summary.png).
 
 N=20 paired ensemble (seeds 42–61). 2050 baseline averages: Li
-$14,328 ± 114, Ni $11,256 ± 78, Pt $44,702,719 ± 140,205.
+$14,328 ± 114, Ni $11,256 ± 78, Pt $39,298,152 ± 216,962.
 
 | Mineral | Scenario | In-window avg | Δ vs baseline |
 |---------|---------|---------------:|--------------:|
@@ -894,9 +908,9 @@ $14,328 ± 114, Ni $11,256 ± 78, Pt $44,702,719 ± 140,205.
 | Ni | asia_crisis_2030       | $17,927 ± 695       | **+6.3% ± 4.9%** [+1.5, +12.7] |
 | Ni | indonesia_squeeze_2032 | $15,001 ± 471       | **+12.8% ± 5.6%** [+5.8, +19.7] |
 | Ni | multi_crisis_2040      | $8,086 ± 680        | +13.8% ± 11.6% [+6.5, +30.7] |
-| Pt | asia_crisis_2030       | $46,522,697 ± 398,952 | -0.2% ± 0.7% (ceiling-pinned) |
-| Pt | sa_pt_crisis_2030      | $46,544,453 ± 423,377 | -0.1% ± 0.8% (ceiling-pinned) |
-| Pt | multi_crisis_2040      | $46,579,432 ± 300,266 | -0.2% ± 0.6% (ceiling-pinned) |
+| Pt | asia_crisis_2030       | $46,556,617 ± 277,945 | +0.0% ± 0.7% (still in-plateau window) |
+| Pt | sa_pt_crisis_2030      | $46,659,174 ± 219,156 | +0.1% ± 0.7% (still in-plateau window) |
+| Pt | multi_crisis_2040      | $35,311,292 ± 447,392 | -0.5% ± 2.0% (off-plateau, noise) |
 
 **Robust signals** (p10 and p90 both positive, narrow band):
 - `li_nationalism_2035`: +56.8% ± 6.9% — Chile + Australia 2-year
@@ -914,14 +928,18 @@ $14,328 ± 114, Ni $11,256 ± 78, Pt $44,702,719 ± 140,205.
   capacity built out, but mean and lower percentile are clearly
   positive.
 
-**Pinned signals**:
-- All three Pt scenarios sit at ~0 ± 0.7% because the Pt baseline
-  is already pinned at the structural soft ceiling
-  (8 × marginal-cost) for years ~8 through ~22. Incremental shocks
-  during that window can't push the price higher than the soft
-  ceiling. To see a meaningful Pt scenario response, the shock
-  needs to fire after the price comes off the ceiling
-  (post-2045), which none of the committed 2050 scenarios do.
+**Pt scenarios**:
+- `asia_crisis_2030` and `sa_pt_crisis_2030` both fire at step 312
+  (year 6), inside the early plateau window where Pt sits at the
+  imbalance-saturation equilibrium ($46.7 M/t). Incremental shocks
+  during this window can't push the price higher because the
+  per-step move is already at its `+max_step_pct` cap.
+- `multi_crisis_2040` fires at step 832 (year 16), well after the
+  plateau breaks under the 8 %/yr high-growth knob. Embargo +
+  chokepoint hits a roughly-balanced market here and the deltas
+  straddle zero (-0.5% ± 2.0%).
+- See the **Platinum** bullet in the canonical-baseline narrative
+  for the plateau / equilibrium derivation.
 
 **Inconclusive**:
 - `multi_crisis_2040` Li: -0.9% ± 4.5% — confidence band straddles

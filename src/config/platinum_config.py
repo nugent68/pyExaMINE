@@ -97,9 +97,12 @@ PLATINUM_CONFIG = {
     # capex-heavy and slow to scale, but sustained 2x+ pricing has
     # historically pulled out brownfield expansion + recommissioning
     # of mothballed shafts (Bushveld 2008-09 cycle, Sibanye-Stillwater
-    # 2020-22 PGM ramp). 5%/yr is achievable under sustained spike
-    # conditions even though baseline build is near-zero.
-    "mine_capacity_growth_per_year_high": 0.05,
+    # 2020-22 PGM ramp). 8%/yr is the upper end of what brownfield +
+    # mothball restarts can deliver under sustained 3x pricing -- the
+    # earlier 5%/yr value left the soft-ceiling pin binding for years
+    # 8-22 of the NetZero run because nameplate couldn't catch the
+    # 600 t/yr 2050 demand curve in time.
+    "mine_capacity_growth_per_year_high": 0.08,
     "mine_expansion_price_threshold": 2.0,
     "mine_expansion_trigger_steps": 52,
     # PGM smelting/refining capacity is similarly mature (Anglo, Sibanye
