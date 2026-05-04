@@ -76,6 +76,11 @@ class ManufacturerAgent(Agent):
         self.produced_this_step = 0
         self.ordered_this_step = 0
 
+        # Inbound-shipment counters maintained by TransportAgent. For
+        # manufacturers the only inbound material type is 'processed'.
+        self._inbound_qty = {}     # material -> running total tons
+        self._inbound_count = {}   # material -> count of in-flight shipments
+
     @property
     def effective_capacity(self):
         """Production capacity scaled by the model's demand-growth factor.
@@ -216,7 +221,7 @@ class ManufacturerAgent(Agent):
         listed ones) sat idle. Shuffling balances utilisation across
         the processor pool without affecting aggregate dynamics.
         """
-        in_transit = sum(s['quantity'] for s in self._pending_inbound_processed())
+        in_transit = self._inbound_qty.get('processed', 0.0)
         effective_inventory = self.input_inventory + in_transit
         minerals_needed = max(0, self.target_inventory - effective_inventory)
         if minerals_needed <= 0:
@@ -252,13 +257,6 @@ class ManufacturerAgent(Agent):
                 destination=self,
                 mineral_tons=actual,
             )
-
-    def _pending_inbound_processed(self):
-        """Iterate shipments of processed mineral currently destined here."""
-        for transport in self.model.transport_agents:
-            for shipment in transport.in_transit:
-                if shipment.get('destination') is self and shipment.get('material') == 'processed':
-                    yield shipment
 
     def receive_shipment(self, material_type, quantity, mineral_tons=0.0,
                          origin_jurisdiction=''):

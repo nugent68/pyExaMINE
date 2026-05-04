@@ -94,6 +94,11 @@ class RetailerAgent(Agent):
         self.received_this_step = 0
         self.received_mineral_this_step = 0
 
+        # Inbound-shipment counters maintained by TransportAgent. For
+        # retailers the only inbound material type is 'product'.
+        self._inbound_qty = {}     # material -> running total units
+        self._inbound_count = {}   # material -> count of in-flight shipments
+
     @property
     def current_country_demand(self):
         """Current expected per-step product demand for this country.
@@ -134,20 +139,14 @@ class RetailerAgent(Agent):
         # 2. Check inventory and reorder if needed.
         self._check_and_reorder()
 
-    def _pending_inbound(self):
-        """Iterate shipments of finished goods currently in transit to this retailer."""
-        for transport in self.model.transport_agents:
-            for shipment in transport.in_transit:
-                if (shipment.get('destination') is self
-                        and shipment.get('material') == 'product'):
-                    yield shipment
-
     def _check_and_reorder(self):
-        pending = list(self._pending_inbound())
-        on_order = sum(s['quantity'] for s in pending)
+        # Inbound counters are maintained by TransportAgent so this is
+        # O(1) instead of an O(transports x shipments) scan.
+        on_order = self._inbound_qty.get('product', 0.0)
+        n_pending = self._inbound_count.get('product', 0)
         inventory_position = self.inventory + on_order
 
-        if inventory_position <= self.reorder_point and len(pending) < self.max_pending:
+        if inventory_position <= self.reorder_point and n_pending < self.max_pending:
             self._place_order()
 
     def _place_order(self):

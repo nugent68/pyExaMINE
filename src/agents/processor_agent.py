@@ -79,6 +79,16 @@ class ProcessorAgent(Agent):
         # the facility's own actions stop.
         self.disruption_counter = 0
 
+        # Inbound-shipment counters maintained by TransportAgent as
+        # shipments are accepted / delivered / dropped. Replaces the
+        # previous O(transports * shipments) scan over every transport's
+        # in_transit list to compute "pending inbound" quantities.
+        # Material types observed for processors: 'ore', 'recycled',
+        # 'processed' (the latter never used, but the dict is keyed
+        # generically).
+        self._inbound_qty = {}     # material -> running total tons
+        self._inbound_count = {}   # material -> count of in-flight shipments
+
     def step(self):
         """Execute one time step of processor behavior."""
         self.processed_this_step = 0
@@ -134,7 +144,7 @@ class ProcessorAgent(Agent):
             return
 
         ranked_mines = sorted(mines, key=lambda m: m.extraction_cost)
-        in_transit = sum(s['quantity'] for s in self._pending_inbound_ore())
+        in_transit = self._inbound_qty.get('ore', 0.0)
 
         # Inventory backpressure: how much *more* processed mineral could
         # we tolerate before hitting the inventory ceiling? Convert that
@@ -186,40 +196,24 @@ class ProcessorAgent(Agent):
                 mineral_tons=0.0,
             )
 
-    def _pending_inbound_ore(self):
-        """Iterate shipments currently in transit destined for this processor.
-
-        Used to keep the processor from over-ordering when capacity is
-        already committed in flight.
-        """
-        for transport in self.model.transport_agents:
-            for shipment in transport.in_transit:
-                if shipment.get('destination') is self and shipment.get('material') == 'ore':
-                    yield shipment
-
     def headroom_for_recycled(self):
         """Inventory headroom available for new recycled deliveries (post-
         conversion tonnes).
 
         Recycled mineral lands directly in ``inventory`` (no conversion
         loss), so it counts 1:1 against ``inventory_cap``. Existing
-        inventory + raw_ore_buffer (× efficiency) + ore in transit (×
-        efficiency) + recycled in transit (× 1) all reserve cap space;
+        inventory + raw_ore_buffer (x efficiency) + ore in transit (x
+        efficiency) + recycled in transit (x 1) all reserve cap space;
         what's left is the headroom a recycler can dispatch into.
         Returns 0.0 if the processor is already at or above its cap.
+
+        ``_inbound_qty`` is maintained by TransportAgent on accept /
+        deliver / drop, replacing what used to be an O(transports x
+        shipments) scan over every transport's in_transit list.
         """
         eff = self.conversion_efficiency
-        in_transit_ore = 0.0
-        in_transit_recycled = 0.0
-        for transport in self.model.transport_agents:
-            for shipment in transport.in_transit:
-                if shipment.get('destination') is not self:
-                    continue
-                mat = shipment.get('material')
-                if mat == 'ore':
-                    in_transit_ore += shipment['quantity']
-                elif mat == 'recycled':
-                    in_transit_recycled += shipment['quantity']
+        in_transit_ore = self._inbound_qty.get('ore', 0.0)
+        in_transit_recycled = self._inbound_qty.get('recycled', 0.0)
         committed = (
             self.inventory
             + self.raw_ore_buffer * eff

@@ -61,6 +61,26 @@ class TransportAgent(Agent):
         self.delivered_this_step = 0.0
         self.total_delivered = 0.0
 
+    @staticmethod
+    def _bump_inbound(destination, material, quantity, sign):
+        """Adjust the destination's pending-inbound counters by ``sign``.
+
+        The receiver agents (Processor / Manufacturer / Retailer) carry
+        ``_inbound_qty`` and ``_inbound_count`` dicts keyed by material
+        type so that "how much is on its way to me?" is O(1) instead
+        of O(transports x shipments). This helper updates both. Other
+        agent types (recyclers, etc.) don't carry the dicts and are
+        skipped via duck-typing.
+        """
+        if destination is None:
+            return
+        qty_dict = getattr(destination, '_inbound_qty', None)
+        if qty_dict is None:
+            return
+        count_dict = destination._inbound_count
+        qty_dict[material] = qty_dict.get(material, 0.0) + sign * quantity
+        count_dict[material] = count_dict.get(material, 0) + sign
+
     def step(self):
         """Execute one time step of transport behavior."""
         self.delivered_this_step = 0.0
@@ -132,6 +152,8 @@ class TransportAgent(Agent):
             )
             self.delivered_this_step += shipment['quantity']
             self.total_delivered += shipment['quantity']
+            self._bump_inbound(destination, shipment['material'],
+                               shipment['quantity'], -1)
             self.in_transit.remove(shipment)
 
     def _drop_shipment(self, shipment, reason):
@@ -150,6 +172,10 @@ class TransportAgent(Agent):
             mineral_tons = shipment.get('mineral', 0.0)
         if mineral_tons > 0:
             self.model.lost_in_transit_mineral += mineral_tons
+        self._bump_inbound(shipment.get('destination'),
+                           shipment.get('material'),
+                           shipment.get('quantity', 0.0),
+                           -1)
         self.in_transit.remove(shipment)
 
     def accept_shipment(self, material_type, quantity, destination,
@@ -195,6 +221,7 @@ class TransportAgent(Agent):
 
         self.in_transit.append(shipment)
         self.accepted_this_step += quantity
+        self._bump_inbound(destination, material_type, quantity, +1)
         return True
 
     def apply_disruption(self, jurisdiction, duration):
