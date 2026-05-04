@@ -142,31 +142,46 @@ def marginal_cost(mines, demand_per_step, offline_premium=1.0):
     Mothballed mines aren't counted in the operational walk because
     they aren't producing this step. As price rises and triggers their
     restart, they rejoin the cost curve naturally on subsequent steps.
+
+    ``mines`` is expected to be sorted ascending by ``extraction_cost``
+    (e.g., the model's ``mines_sorted_by_cost`` list, built once at
+    construction). The function does not re-sort; pass an unsorted
+    iterable only if you accept that the merit-order walk will use
+    that iteration order.
     """
     if not mines:
         return 0.0
-    if demand_per_step <= 0:
-        return min(m.extraction_cost for m in mines if m.extraction_cost > 0)
 
-    operational = sorted(
-        (m for m in mines if m.disruption_counter == 0 and not m.mothballed
-         and m.extraction_cost > 0),
-        key=lambda m: m.extraction_cost,
-    )
-    if not operational:
-        # No active producers -- the price needed to bring the cheapest
-        # mothballed mine back online is its extraction cost times the
-        # restart margin.
-        cheapest = min(m.extraction_cost for m in mines if m.extraction_cost > 0)
-        return cheapest * offline_premium
+    if demand_per_step <= 0:
+        # Cheapest valid mine across the whole list (sorted -> first one).
+        for m in mines:
+            if m.extraction_cost > 0:
+                return m.extraction_cost
+        return 0.0
 
     cumulative = 0.0
-    last_cost = operational[0].extraction_cost
-    for mine in operational:
+    last_cost = 0.0
+    found_operational = False
+    for mine in mines:
+        if mine.extraction_cost <= 0:
+            continue
+        if mine.disruption_counter != 0 or mine.mothballed:
+            continue
+        found_operational = True
         last_cost = mine.extraction_cost
         cumulative += getattr(mine, 'production_capacity', 0.0)
         if cumulative >= demand_per_step:
             return last_cost
+
+    if not found_operational:
+        # No active producers -- the price needed to bring the cheapest
+        # mothballed mine back online is its extraction cost times the
+        # restart margin.
+        for m in mines:
+            if m.extraction_cost > 0:
+                return m.extraction_cost * offline_premium
+        return 0.0
+
     # Operational capacity falls short -- the most expensive active mine
     # is the binding marginal producer.
     return last_cost
@@ -178,17 +193,23 @@ def cheapest_active_cost(mines, offline_premium=1.0):
     See ``marginal_cost`` for the rationale on ``offline_premium`` --
     the fallback when no mines are operational also gets multiplied by
     the premium so the soft floor lifts above the restart trigger.
+
+    Like ``marginal_cost``, expects ``mines`` sorted ascending by
+    ``extraction_cost``. The first operational entry is returned, which
+    matches what the previous implementation computed via list-build +
+    min().
     """
     if not mines:
         return 0.0
-    operational = [
-        m for m in mines
-        if m.disruption_counter == 0 and not m.mothballed and m.extraction_cost > 0
-    ]
-    if operational:
-        return min(m.extraction_cost for m in operational)
-    cheapest = min(m.extraction_cost for m in mines if m.extraction_cost > 0)
-    return cheapest * offline_premium
+    for m in mines:
+        if (m.disruption_counter == 0 and not m.mothballed
+                and m.extraction_cost > 0):
+            return m.extraction_cost
+    # Nothing operational; cheapest valid mine * premium.
+    for m in mines:
+        if m.extraction_cost > 0:
+            return m.extraction_cost * offline_premium
+    return 0.0
 
 
 def check_geopolitical_event(probability, random_state=None):

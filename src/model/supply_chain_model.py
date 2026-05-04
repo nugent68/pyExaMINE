@@ -10,6 +10,8 @@ Tier-ordered scheduler: mines -> recyclers -> processors -> manufacturers
 earlier in the same step queue with the full lead time).
 """
 
+from collections import deque
+
 from mesa import Model
 from mesa.datacollection import DataCollector
 import numpy as np
@@ -113,9 +115,11 @@ class MineralSupplyChainModel(Model):
         # to baseline mineral demand so the smoother isn't dominated by
         # the startup transient (lead-time gap before the first ore
         # shipments arrive at processors). Populated after data load in
-        # ``_resolve_baseline_demand``.
-        self.supply_flow_history: list = []
-        self.demand_flow_history: list = []
+        # ``_resolve_baseline_demand``. Implemented as bounded deques so
+        # both append and oldest-eviction are O(1); the previous list-
+        # plus-pop(0) cost O(window) per step.
+        self.supply_flow_history: deque = deque()
+        self.demand_flow_history: deque = deque()
 
         # Cost-curve tracking (set by _update_price each step; exposed
         # on the data collector as Marginal_Cost / Cheapest_Active_Cost
@@ -139,6 +143,14 @@ class MineralSupplyChainModel(Model):
         self.current_step = 0
 
         self._load_data_and_create_agents()
+        # Pre-sort mines by extraction_cost (immutable post-construction).
+        # Used by the merit-order cost-curve helpers and the processor
+        # purchase loop, both of which previously sorted on every call.
+        # ``mines_sorted_by_cost`` is the canonical iteration order; do
+        # not mutate it after creation.
+        self.mines_sorted_by_cost = sorted(
+            self.mines, key=lambda m: m.extraction_cost,
+        )
         # Snapshot initial total mineral baseline (reserves + every
         # warm-started inventory) for the conservation diagnostic.
         # Done here (not in __init__) because the agents don't exist
@@ -272,8 +284,8 @@ class MineralSupplyChainModel(Model):
         # would synthesise an artificial price spike at startup.
         window = int(self.config.get("price_signal_window_steps", 8))
         seed = self.baseline_mineral_demand_per_step
-        self.supply_flow_history = [seed] * window
-        self.demand_flow_history = [seed] * window
+        self.supply_flow_history = deque([seed] * window, maxlen=window)
+        self.demand_flow_history = deque([seed] * window, maxlen=window)
 
     def annual_demand_at(self, step):
         """Linearly interpolate annual mineral demand at a given step.
@@ -778,12 +790,12 @@ class MineralSupplyChainModel(Model):
             avg_intensity = self.config.get("manufacturer_mineral_intensity", 0.008)
         demand_this_step = max(total_product_demand * avg_intensity, 1e-9)
 
-        window = int(self.config.get("price_signal_window_steps", 8))
+        # ``supply_flow_history`` and ``demand_flow_history`` are deques
+        # with ``maxlen=price_signal_window_steps`` set in
+        # ``_resolve_baseline_demand``, so append automatically evicts
+        # the oldest entry. No explicit pop loop needed.
         self.supply_flow_history.append(supply_this_step)
         self.demand_flow_history.append(demand_this_step)
-        if len(self.supply_flow_history) > window:
-            self.supply_flow_history.pop(0)
-            self.demand_flow_history.pop(0)
 
         supply_smoothed = sum(self.supply_flow_history) / len(self.supply_flow_history)
         demand_smoothed = sum(self.demand_flow_history) / len(self.demand_flow_history)
@@ -804,11 +816,13 @@ class MineralSupplyChainModel(Model):
         # implied break-even price is the price needed to actually
         # bring something back online.
         restart_margin = float(self.config.get("mine_restart_margin", 1.2))
+        # Pass the cost-sorted view so the merit-order helpers don't
+        # re-sort on every step.
         self._marginal_cost = marginal_cost(
-            self.mines, demand_smoothed, offline_premium=restart_margin,
+            self.mines_sorted_by_cost, demand_smoothed, offline_premium=restart_margin,
         )
         self._cheapest_cost = cheapest_active_cost(
-            self.mines, offline_premium=restart_margin,
+            self.mines_sorted_by_cost, offline_premium=restart_margin,
         )
 
         elasticity = float(self.config.get("price_elasticity", 0.4))

@@ -139,11 +139,10 @@ class ProcessorAgent(Agent):
         raw_ore_buffer is the relevant "pipeline" quantity for capacity
         planning, not raw_ore_buffer alone.
         """
-        mines = self.model.mines
-        if not mines:
+        ranked_mines = self.model.mines_sorted_by_cost
+        if not ranked_mines:
             return
 
-        ranked_mines = sorted(mines, key=lambda m: m.extraction_cost)
         in_transit = self._inbound_qty.get('ore', 0.0)
 
         # Inventory backpressure: how much *more* processed mineral could
