@@ -119,8 +119,17 @@ class ConsumerAgent(Agent):
         consumer's. If the local retailer is stocked out, the demand is
         unfulfilled (the consumer doesn't import an EV from another
         country).
+
+        ``_cached_local_retailers`` is built on first call and reused
+        thereafter -- retailer country is immutable so the membership
+        of the local-retailers set doesn't change. The shuffle still
+        operates on a fresh copy each call to preserve the original
+        deterministic RNG-consumption pattern.
         """
-        local_retailers = [r for r in self.model.retailers if r.country == self.country]
+        local_retailers = getattr(self, '_cached_local_retailers', None)
+        if local_retailers is None:
+            local_retailers = [r for r in self.model.retailers if r.country == self.country]
+            self._cached_local_retailers = local_retailers
 
         if not local_retailers:
             self.unfulfilled_demand = self.current_demand

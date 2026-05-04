@@ -149,28 +149,16 @@ class RetailerAgent(Agent):
         if inventory_position <= self.reorder_point and n_pending < self.max_pending:
             self._place_order()
 
-    def _place_order(self):
-        """Place an order with manufacturers, region-preferenced.
-
-        Tries same-country manufacturers first, then same-region, then
-        the rest of the world. Within each tier, manufacturers are
-        shuffled so no single firm is systematically starved. This
-        mirrors the recycler's region-preferenced sourcing.
-
-        Without region preferencing, orders are split across many
-        long-lead-time foreign manufacturers (e.g. a Chinese retailer
-        random-order would source ~50% from China mfr but the rest from
-        Europe/Korea/Japan with 3-7 week lead times). The on_order
-        sum then treats those long-lead shipments as effectively
-        present, suppressing reorders, while real inventory drains to
-        zero in a 1-2 step window. Region preferencing keeps the
-        actual lead time short so the (s, Q) cycle works as designed.
+    def _ensure_canonical_tiers_cached(self):
+        """Build the canonical (unshuffled) local / regional / global_rest
+        manufacturer tiers once. Manufacturer country is immutable, so
+        membership of each tier is fixed for this retailer's lifetime.
         """
+        if getattr(self, '_canonical_tiers', None) is not None:
+            return
         from ..data.routing import COUNTRY_REGION
-
-        manufacturers = list(self.model.manufacturers)
+        manufacturers = self.model.manufacturers
         my_region = COUNTRY_REGION.get(self.country, 'Other')
-
         local = [m for m in manufacturers if m.country == self.country]
         regional = [
             m for m in manufacturers
@@ -182,13 +170,45 @@ class RetailerAgent(Agent):
             if m.country != self.country
             and COUNTRY_REGION.get(m.country, 'Other') != my_region
         ]
-        for tier in (local, regional, global_rest):
-            self.model.random_state.shuffle(tier)
+        self._canonical_tiers = (local, regional, global_rest)
 
+    def _place_order(self):
+        """Place an order with manufacturers, region-preferenced.
+
+        Tries same-country manufacturers first, then same-region, then
+        the rest of the world. Within each tier, manufacturers are
+        shuffled so no single firm is systematically starved.
+
+        Without region preferencing, orders are split across many
+        long-lead-time foreign manufacturers (e.g. a Chinese retailer
+        random-order would source ~50% from China mfr but the rest from
+        Europe/Korea/Japan with 3-7 week lead times). The on_order
+        sum then treats those long-lead shipments as effectively
+        present, suppressing reorders, while real inventory drains to
+        zero in a 1-2 step window. Region preferencing keeps the
+        actual lead time short so the (s, Q) cycle works as designed.
+
+        Tier membership is cached at first call (manufacturer country is
+        immutable). Each tier is shuffled lazily -- only when we are
+        about to iterate it -- so retailers whose local tier fulfills
+        the order skip the regional / global_rest shuffles entirely.
+        That changes the RNG consumption pattern relative to the
+        previous "shuffle all three upfront" version, so per-seed
+        trajectories diverge slightly; ensemble distributions are
+        equivalent.
+        """
+        self._ensure_canonical_tiers_cached()
+
+        rng = self.model.random_state
         remaining = self.order_quantity
-        for tier in (local, regional, global_rest):
+        for canonical_tier in self._canonical_tiers:
             if remaining <= 0:
                 break
+            if not canonical_tier:
+                continue
+            # Copy so we don't mutate the cached canonical list.
+            tier = list(canonical_tier)
+            rng.shuffle(tier)
             for manufacturer in tier:
                 if remaining <= 0:
                     break

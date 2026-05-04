@@ -181,11 +181,21 @@ class RecyclingAgent(Agent):
         Returns same-country processors if any exist; else same-region
         processors; else all processors. Empty list only if the global
         processor pool is empty (which the caller already guards).
+
+        The chosen tier is cached on first call -- processor country is
+        immutable post-construction, so the membership of each tier never
+        changes after agent setup. The cache replaces what was a
+        per-step scan of every processor for every recycler.
         """
+        cached = getattr(self, '_cached_target_tier', None)
+        if cached is not None:
+            return cached
+
         from ..data.routing import COUNTRY_REGION
 
         local = [p for p in processors if p.country == self.country]
         if local:
+            self._cached_target_tier = local
             return local
 
         my_region = COUNTRY_REGION.get(self.country, 'Other')
@@ -194,9 +204,11 @@ class RecyclingAgent(Agent):
             if COUNTRY_REGION.get(p.country, 'Other') == my_region
         ]
         if regional:
+            self._cached_target_tier = regional
             return regional
 
-        return list(processors)
+        self._cached_target_tier = list(processors)
+        return self._cached_target_tier
 
     def get_recycled_supply(self):
         """Get the amount recycled this step."""

@@ -641,9 +641,13 @@ class MineralSupplyChainModel(Model):
 
         # 4. Update global price.
         self._update_price()
-        # 5. Collect data.
+        # 5. Refresh per-step diagnostic caches (one walk over storage +
+        #    one walk over transport instead of the four walks that the
+        #    DataCollector lambdas would otherwise produce).
+        self._refresh_step_diagnostics()
+        # 6. Collect data.
         self.datacollector.collect(self)
-        # 6. Increment step counter.
+        # 7. Increment step counter.
         self.current_step += 1
 
     def _check_geopolitical_events(self):
@@ -941,7 +945,7 @@ class MineralSupplyChainModel(Model):
             total += rec.storage + rec.recovered_pool
         return total
 
-    def mass_balance_discrepancy(self):
+    def mass_balance_discrepancy(self, total_mineral=None):
         """Initial total + replacement minus everything accounted for.
 
         Should be ~0 within float tolerance. Drifts away from zero if
@@ -951,15 +955,56 @@ class MineralSupplyChainModel(Model):
         growing positive discrepancy (mass disappearing). Reserve
         replacement is on the source side: exploration introduces new
         mineral, so it's added to the initial baseline.
+
+        ``total_mineral`` may be passed by callers that have already
+        computed it this step (see ``_refresh_step_diagnostics``); if
+        omitted, it's computed here. The optional argument lets the
+        per-step DataCollector path call ``total_mineral_in_system``
+        once instead of twice.
         """
+        if total_mineral is None:
+            total_mineral = self.total_mineral_in_system()
         accounted = (
-            self.total_mineral_in_system()
+            total_mineral
             + self.cumulative_processor_yield_loss
             + self.cumulative_recovery_loss
             + self.lost_in_transit_mineral
         )
         source = self._initial_total_mineral + self.cumulative_reserve_replacement
         return source - accounted
+
+    def _refresh_step_diagnostics(self):
+        """Populate per-step diagnostic caches so DataCollector lambdas
+        don't repeat the same expensive walks.
+
+        Without this, the column lambdas walk the full pipeline state
+        multiple times per step:
+          - total_mineral_in_system() once for the Total_Mineral_In_System
+            column, then again from inside mass_balance_discrepancy().
+          - Two separate transport-iteration lambdas for
+            Total_In_Transit_Tons and Total_Product_Units_In_Transit.
+        Here we do one walk over storage, one walk over transport, and
+        feed all four columns from cached values. Float-summation order
+        is preserved, so the cached values are bit-identical to what the
+        previous lambdas computed.
+        """
+        total = self.total_mineral_in_system()
+        self._cached_total_mineral = total
+        self._cached_mass_balance = self.mass_balance_discrepancy(total_mineral=total)
+
+        transit_tons = 0.0
+        product_units = 0.0
+        for t in self.transport_agents:
+            for s in t.in_transit:
+                mat = s['material']
+                if mat in ('ore', 'processed', 'recycled'):
+                    transit_tons += s['quantity']
+                else:
+                    transit_tons += s.get('mineral', 0.0)
+                    if mat == 'product':
+                        product_units += s['quantity']
+        self._cached_transit_tons = transit_tons
+        self._cached_transit_product_units = product_units
 
     def _setup_data_collector(self):
         self.datacollector = DataCollector(
@@ -990,12 +1035,15 @@ class MineralSupplyChainModel(Model):
                 # reports the residual (should hover at ~0 within float
                 # precision). A persistently growing discrepancy is a
                 # mineral-mass leak somewhere in the pipeline.
-                "Total_Mineral_In_System": lambda m: m.total_mineral_in_system(),
+                # Per-step diagnostic snapshots populated by
+                # _refresh_step_diagnostics so the DataCollector doesn't
+                # walk the pipeline twice for these columns.
+                "Total_Mineral_In_System": lambda m: m._cached_total_mineral,
                 "Cumulative_Processor_Yield_Loss": lambda m: m.cumulative_processor_yield_loss,
                 "Cumulative_Recovery_Loss": lambda m: m.cumulative_recovery_loss,
                 "Lost_In_Transit_Mineral": lambda m: m.lost_in_transit_mineral,
                 "Cumulative_Reserve_Replacement": lambda m: m.cumulative_reserve_replacement,
-                "Mass_Balance_Discrepancy": lambda m: m.mass_balance_discrepancy(),
+                "Mass_Balance_Discrepancy": lambda m: m._cached_mass_balance,
                 "Disrupted_Mines_Count": lambda m: sum(1 for a in m.mines if a.disruption_counter > 0),
                 "Disrupted_Processors_Count": lambda m: sum(1 for a in m.processors if a.disruption_counter > 0),
                 "Mothballed_Mines_Count": lambda m: sum(1 for a in m.mines if a.mothballed),
@@ -1017,18 +1065,12 @@ class MineralSupplyChainModel(Model):
                 "Closed_Chokepoints_Count": lambda m: len(m.closed_chokepoints),
                 # Mineral-tonnes in transit. Sums ore/processed/recycled
                 # quantity (already in mineral tonnes) plus the embedded
-                # mineral content of finished-goods shipments. Avoids the
-                # apples-and-oranges mix of summing tons + product units.
-                "Total_In_Transit_Tons": lambda m: sum(
-                    (s['quantity'] if s['material'] in ('ore', 'processed', 'recycled')
-                     else s.get('mineral', 0.0))
-                    for t in m.transport_agents for s in t.in_transit
-                ),
+                # mineral content of finished-goods shipments. Both this
+                # and the product-units total below are computed in a
+                # single transport walk inside _refresh_step_diagnostics.
+                "Total_In_Transit_Tons": lambda m: m._cached_transit_tons,
                 # Product-unit shipments in transit (manufacturer -> retailer).
-                "Total_Product_Units_In_Transit": lambda m: sum(
-                    s['quantity'] for t in m.transport_agents
-                    for s in t.in_transit if s['material'] == 'product'
-                ),
+                "Total_Product_Units_In_Transit": lambda m: m._cached_transit_product_units,
             }
         )
 
