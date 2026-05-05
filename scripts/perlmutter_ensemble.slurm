@@ -42,16 +42,22 @@ echo "RUNDIR:  $RUNDIR"
 echo "Started: $(date)"
 echo
 
-# Run the full 20-seed regen inside the container. --module=cpu picks
-# the CPU stack (no MPICH / GPU shims). --volume=$RUNDIR:/data overlays
-# the writable host scratch path on the read-only image /data; the
-# container's PYEXAMINE_OUTPUT_DIR=/data env var (set in the Dockerfile)
-# means every script lands its output under /data without any extra
-# --output-root flag.
+# Run the full 20-seed regen inside the container.
+# --volume=$RUNDIR:/data overlays the writable host scratch path on
+# the read-only image /data; the container's PYEXAMINE_OUTPUT_DIR=/data
+# env var (set in the Dockerfile) means every script lands its output
+# under /data without any extra --output-root flag.
+#
+# Note: Perlmutter Shifter has no ``--module=cpu``. On a CPU node the
+# default module set is correct.
+# Use /app/.venv/bin/python directly rather than ``uv run python``.
+# ``uv run`` tries to acquire a lock in $HOME/.cache/uv, which on the
+# GPFS-backed Perlmutter $HOME has flaky flock support. The image's
+# venv is fully populated at build time, so uv has no work to do here.
 srun --cpu-bind=cores \
-    shifter --module=cpu --volume="$RUNDIR:/data" bash -c "
+    shifter --volume="$RUNDIR:/data" bash -c "
         cd /app
-        uv run python scripts/regenerate_outputs.py \
+        /app/.venv/bin/python scripts/regenerate_outputs.py \
             --n-seeds 20 \
             --n-workers 64
     "

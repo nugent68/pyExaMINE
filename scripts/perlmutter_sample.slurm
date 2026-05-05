@@ -15,7 +15,7 @@
 #   #    This step also creates the scenarios/ subdir under CFS.
 #   shifter --image=docker:nugent68/pyexamine:latest \
 #       --volume=$CFS/amsc001/www/surrogate_data:/data \
-#       bash -c "cd /app && uv run python scripts/sample_scenarios.py \
+#       bash -c "cd /app && /app/.venv/bin/python scripts/sample_scenarios.py \
 #           --n 2000 --out /data/scenarios"
 #
 #   # 2. Submit the job (defaults to all 3 minerals, 2000 each):
@@ -60,10 +60,21 @@ echo
 
 # Per-task wrapper: invoke shifter for one (mineral, index) pair.
 # Exported so GNU parallel sees it via env_parallel-style spawn.
+#
+# Notes on the shifter call:
+#  * Perlmutter Shifter has no ``--module=cpu`` (that was a Cori
+#    convention). On CPU nodes the default module set is correct.
+#  * We invoke ``/app/.venv/bin/python`` directly instead of
+#    ``uv run python``. ``uv run`` acquires a lockfile in the user's
+#    ``~/.cache/uv`` directory before sync-checking the project; on
+#    Perlmutter that's a GPFS path with flaky ``flock`` support, and
+#    20+ concurrent ``uv run`` invocations fight for the lock and
+#    fail with ``os error 524``. The image's venv is fully populated
+#    at build time, so we don't need uv at runtime at all.
 run_task() {
     local mineral=$1 idx=$2 data_root=$3
-    shifter --module=cpu --volume="${data_root}:/data" \
-        bash -c "cd /app && uv run python scripts/run_one_scenario.py \
+    shifter --volume="${data_root}:/data" \
+        bash -c "cd /app && /app/.venv/bin/python scripts/run_one_scenario.py \
             --scenarios /data/scenarios/${mineral}.json \
             --index ${idx} \
             --output-root /data/runs \
