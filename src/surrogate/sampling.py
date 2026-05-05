@@ -176,3 +176,33 @@ def sample_scenarios(
         })
 
     return scenarios
+
+
+def expand_with_seeds(scenarios: list[dict], n_seeds: int) -> list[dict]:
+    """Replicate each scenario into ``n_seeds`` runs with different seeds.
+
+    Used by the surrogate Phase-2 pipeline to train on per-scenario
+    ensemble means + stds rather than single-seed point estimates.
+    Run k of scenario i (0-indexed) lands at expanded index
+    ``i * n_seeds + k``, so given a flat task index ``j`` the underlying
+    scenario is ``j // n_seeds`` -- a property the dataset builder
+    relies on to group seeds back together.
+
+    Each replica gets a deterministic seed derived from the scenario's
+    original ``random_seed`` plus a large prime times ``k``. Two
+    independent calls with the same input produce identical output
+    (no in-call RNG), making the expansion reproducible.
+    """
+    if n_seeds <= 1:
+        return list(scenarios)
+    if n_seeds <= 0:
+        return []
+
+    expanded: list[dict] = []
+    for scen in scenarios:
+        base_seed = int(scen.get("random_seed", 0))
+        for k in range(n_seeds):
+            replica = dict(scen)
+            replica["random_seed"] = (base_seed + k * 314_159) % (2**31)
+            expanded.append(replica)
+    return expanded
