@@ -1,0 +1,48 @@
+# syntax=docker/dockerfile:1
+#
+# pyExaMINE container.
+#
+# Uses the official Astral uv image so we don't have to install uv
+# ourselves. Python 3.12 is well within the project's `>=3.10`
+# constraint and is the most-tested CPython release among the
+# 3.10/3.11/3.12 set the lockfile resolves cleanly against.
+#
+# Build:   docker build -t pyexamine:latest .
+# Run:     docker run --rm pyexamine                       # default smoke run
+#          docker run --rm pyexamine --mineral lithium --steps 200 --no-viz
+#          docker run --rm -v $(pwd)/outputs:/app/outputs pyexamine --all
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# Run as a non-root user. The container's UID/GID can be overridden at
+# build time so bind-mounted output volumes keep host ownership.
+ARG UID=1000
+ARG GID=1000
+RUN groupadd --gid ${GID} app \
+    && useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash app
+
+WORKDIR /app
+RUN chown app:app /app
+USER app
+
+# Headless matplotlib (no DISPLAY, no GUI backend probing).
+ENV MPLBACKEND=Agg
+
+# uv keeps its bytecode / wheel cache under $HOME by default. Pinning
+# the venv inside /app means it lands on the same filesystem as the
+# project source and isn't recreated on a chown / volume-mount.
+ENV UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+
+# 1. Install project dependencies first. Copying just the lockfile +
+#    pyproject.toml means edits to source code don't bust this layer.
+COPY --chown=app:app pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+# 2. Copy the rest of the project + install pyexamine itself into the
+#    venv (records package metadata; lets `python -m ...` find modules
+#    via the installed entry-points if they're added later).
+COPY --chown=app:app . .
+RUN uv sync --frozen --no-dev
+
+ENTRYPOINT ["uv", "run", "python", "run_simulation.py"]
+CMD ["--all", "--steps", "200", "--seed", "42", "--no-viz"]

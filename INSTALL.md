@@ -173,21 +173,42 @@ uv run black src/
 uv run flake8 src/
 ```
 
-## Docker alternative (advanced)
+## Docker
 
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-RUN pip install uv
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
-COPY . .
-CMD ["uv", "run", "python", "run_simulation.py", "--all", "--steps", "200"]
-```
+A working `Dockerfile` and `.dockerignore` ship with the repo, so you
+can build a self-contained pyExaMINE image without writing your own.
+The image is based on the official `astral-sh/uv` Python 3.12 image,
+runs as a non-root user, and uses `uv sync --frozen --no-dev` so it
+matches the lockfile exactly.
 
 ```bash
-docker build -t pyexamine .
-docker run -v $(pwd)/outputs:/app/outputs pyexamine
+# Build the image (~25 s on a warm machine; final size ~760 MB).
+docker build -t pyexamine:latest .
+
+# Default: 200-step --all run with seed 42 and no viz.
+docker run --rm pyexamine
+
+# Override CLI args (anything after the image name is forwarded to
+# run_simulation.py).
+docker run --rm pyexamine --mineral lithium --steps 1352 --seed 42 --no-viz
+
+# Persist outputs to the host. Match host UID/GID at build time so
+# bind-mounted files come out owned by you, not the container's app user.
+docker build -t pyexamine:latest \
+    --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
+docker run --rm -v $(pwd)/outputs:/app/outputs pyexamine \
+    --mineral nickel --steps 1352
+
+# Drop into a shell inside the image (useful for poking around).
+docker run --rm -it --entrypoint bash pyexamine
+```
+
+A pre-built image is also published to Docker Hub for users who don't
+want to build locally:
+
+```bash
+docker pull nugent68/pyexamine:latest
+docker run --rm nugent68/pyexamine:latest --mineral lithium --steps 50 --no-viz
 ```
 
 ## Next steps

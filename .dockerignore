@@ -1,0 +1,33 @@
+# Don't ship the dev environment / VCS / scratch files into the image.
+.git/
+.gitignore
+
+# Python virtual environments (image builds its own .venv via uv sync).
+.venv/
+venv/
+
+# Python bytecode caches.
+__pycache__/
+*.pyc
+*.pyo
+
+# uv lock cache.
+.uv/
+
+# Per-seed ensemble run CSVs (large; only summary artefacts in outputs/
+# are committed). Same convention as the project .gitignore.
+ensemble_runs/
+
+# Editor / OS noise.
+.DS_Store
+.idea/
+.vscode/
+
+# Generated outputs -- keep the image lean. Mount a volume at /app/outputs
+# (e.g. `docker run -v $(pwd)/outputs:/app/outputs ...`) if you want to
+# read or persist results.
+outputs/
+
+# Local Docker artefacts.
+Dockerfile
+.dockerignore
