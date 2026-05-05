@@ -13,9 +13,14 @@ The five targets:
                                      pre_window_mean * 100
   ``peak_price``                     max Global_Price over the window ($/t)
   ``recovery_time_steps``            steps after the last event ends until
-                                     price returns within 5% of pre-event mean;
-                                     a sentinel ``-1`` if the run ends before
-                                     recovery
+                                     price returns within 5% of pre-event mean.
+                                     If the run ends before recovery, this is
+                                     set to ``n_steps`` (the simulation horizon)
+                                     -- a numeric upper bound rather than a
+                                     ``-1`` sentinel, which makes the column
+                                     well-behaved as a regression target.
+                                     Callers who want to know "did it recover?"
+                                     should test ``recovery_time_steps < n_steps``.
   ``unfulfilled_fraction_in_window`` sum(unfulfilled) / sum(fulfilled +
                                      unfulfilled), as a fraction in [0, 1]
 
@@ -48,7 +53,11 @@ _PRE_EVENT_LOOKBACK = 26
 #: Fraction of pre-event mean defining "recovered" for recovery_time_steps.
 _RECOVERY_TOLERANCE = 0.05
 
-#: Sentinel for "did not recover before run ended".
+#: Legacy sentinel for "did not recover before run ended". Retained as a
+#: named constant for any downstream code that may still test against it,
+#: but ``extract_targets`` no longer emits it -- unrecovered runs now get
+#: ``n_steps`` as a numeric cap so the surrogate's regression target
+#: stays well-behaved.
 RECOVERY_NEVER: int = -1
 
 
@@ -187,14 +196,19 @@ def extract_targets(df: pd.DataFrame, scenario: dict) -> dict[str, float]:
         delta_pct = float("nan")
 
     # Recovery time: how long after the last event end before price
-    # returns within +/-5% of the pre-event mean.
+    # returns within +/-5% of the pre-event mean. If the run ends before
+    # the price recovers, we cap at ``n_steps`` (the simulation horizon
+    # in the scenario) instead of emitting a -1 sentinel, so the column
+    # stays well-behaved as a regression target. Callers can detect
+    # "didn't recover" by testing ``recovery_time_steps >= n_steps``.
     last_end = _last_event_end(scenario)
+    n_steps = int(scenario.get("n_steps", 1352))
     if last_end is None or not np.isfinite(mean_pre) or mean_pre <= 0:
         recovery = 0
     else:
         tail = _safe_segment(df, last_end, len(df), "Global_Price")
         recovered = np.where(np.abs(tail - mean_pre) / mean_pre < _RECOVERY_TOLERANCE)[0]
-        recovery = int(recovered[0]) if recovered.size > 0 else RECOVERY_NEVER
+        recovery = int(recovered[0]) if recovered.size > 0 else n_steps
 
     # Unfulfilled fraction: integrate over the same window.
     fulfilled = _safe_segment(df, win_lo, win_hi, "Fulfilled_Demand_Units")
