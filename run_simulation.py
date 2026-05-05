@@ -66,8 +66,13 @@ def parse_arguments():
     parser.add_argument(
         '--output-dir',
         type=str,
-        default='outputs',
-        help='Output directory for results'
+        default=os.environ.get('PYEXAMINE_OUTPUT_DIR', 'outputs'),
+        help=(
+            'Output directory for results. Defaults to '
+            '$PYEXAMINE_OUTPUT_DIR if set (the Docker / Shifter image '
+            'sets this to /data so users can bind-mount a writable host '
+            'directory there), otherwise the local "outputs/" folder.'
+        ),
     )
     
     parser.add_argument(

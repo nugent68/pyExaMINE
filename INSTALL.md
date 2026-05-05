@@ -181,23 +181,46 @@ The image is based on the official `astral-sh/uv` Python 3.12 image,
 runs as a non-root user, and uses `uv sync --frozen --no-dev` so it
 matches the lockfile exactly.
 
+### Output convention: bind-mount a host directory at `/data`
+
+The image sets `PYEXAMINE_OUTPUT_DIR=/data` and creates an empty
+`/data` directory as a conventional bind-mount target. Both
+`run_simulation.py --output-dir` and `scripts/regenerate_outputs.py
+--output-root` default to this env var, so a writable host directory
+mounted at `/data` is the only thing you need:
+
 ```bash
-# Build the image (~25 s on a warm machine; final size ~760 MB).
+docker run --rm -v $(pwd)/runs:/data pyexamine \
+    --mineral lithium --steps 1352 --no-viz
+# results land at $(pwd)/runs/lithium_*.csv
+```
+
+This is the same recipe under Shifter at NERSC -- the image's read-
+only filesystem is overlaid with a writable host path the same way:
+
+```bash
+shifter --image=docker:nugent68/pyexamine:latest \
+    --volume="$SCRATCH/myrun:/data" bash -c \
+    "cd /app && uv run python run_simulation.py --mineral lithium --steps 200"
+```
+
+### Build + run
+
+```bash
+# Build the image (~25 s on a warm machine; final size ~770 MB).
 docker build -t pyexamine:latest .
 
-# Default: 200-step --all run with seed 42 and no viz.
+# Default smoke run -- writes to /data inside the container; gone on exit.
 docker run --rm pyexamine
 
-# Override CLI args (anything after the image name is forwarded to
-# run_simulation.py).
-docker run --rm pyexamine --mineral lithium --steps 1352 --seed 42 --no-viz
+# Real run -- bind-mount a host dir at /data so results persist.
+docker run --rm -v $(pwd)/runs:/data pyexamine \
+    --mineral nickel --steps 1352 --no-viz
 
-# Persist outputs to the host. Match host UID/GID at build time so
-# bind-mounted files come out owned by you, not the container's app user.
+# Match host UID/GID at build time so bind-mounted files come out
+# owned by you (not the container's app user):
 docker build -t pyexamine:latest \
     --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
-docker run --rm -v $(pwd)/outputs:/app/outputs pyexamine \
-    --mineral nickel --steps 1352
 
 # Drop into a shell inside the image (useful for poking around).
 docker run --rm -it --entrypoint bash pyexamine
@@ -208,8 +231,40 @@ want to build locally:
 
 ```bash
 docker pull nugent68/pyexamine:latest
-docker run --rm nugent68/pyexamine:latest --mineral lithium --steps 50 --no-viz
+docker run --rm -v $(pwd)/runs:/data nugent68/pyexamine:latest \
+    --mineral lithium --steps 200 --no-viz
 ```
+
+## Running on NERSC Perlmutter via Shifter
+
+The same Docker Hub image runs unchanged under Shifter. After the
+image is pulled into the NERSC Shifter cache (do this once, and again
+after each `docker push`):
+
+```bash
+ssh perlmutter.nersc.gov 'shifterimg pull docker:nugent68/pyexamine:latest'
+```
+
+For interactive smoke tests on a login node, mount any writable host
+directory at `/data`:
+
+```bash
+shifter --image=docker:nugent68/pyexamine:latest \
+    --volume="$SCRATCH/test:/data" bash -c \
+    "cd /app && uv run python run_simulation.py --mineral lithium --steps 200 --no-viz"
+```
+
+For real ensemble runs, use the bundled Slurm script:
+
+```bash
+sbatch scripts/perlmutter_ensemble.slurm
+```
+
+Edit the `--account` line of the script to your NERSC project repo
+first. The job runs the full 20-seed canonical sweep
+(`scripts/regenerate_outputs.py --n-seeds 20 --n-workers 64`) on a
+single 128-core CPU node in 3-5 minutes; results land in
+`$SCRATCH/pyexamine_run_<jobid>/`.
 
 ## Next steps
 

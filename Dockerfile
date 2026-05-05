@@ -10,7 +10,15 @@
 # Build:   docker build -t pyexamine:latest .
 # Run:     docker run --rm pyexamine                       # default smoke run
 #          docker run --rm pyexamine --mineral lithium --steps 200 --no-viz
-#          docker run --rm -v $(pwd)/outputs:/app/outputs pyexamine --all
+#          docker run --rm -v $(pwd)/runs:/data pyexamine --all
+#
+# Output convention: results land in /data inside the container by
+# default (PYEXAMINE_OUTPUT_DIR env var). Mount a writable host
+# directory there to persist results:
+#   docker run -v $(pwd)/runs:/data pyexamine ...
+#   shifter --image=... --volume=$SCRATCH/run:/data ...
+# This makes the same image work under Docker (writable image FS) and
+# Shifter (read-only image FS) without code changes.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # Run as a non-root user. The container's UID/GID can be overridden at
@@ -20,12 +28,25 @@ ARG GID=1000
 RUN groupadd --gid ${GID} app \
     && useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash app
 
+# Pre-create the conventional /data mountpoint as the runtime user. When
+# nothing is mounted on top, /data is writable inside the image (Docker)
+# but read-only under Shifter; either way users can override it with a
+# bind mount of any writable host directory.
+RUN mkdir /data && chown app:app /data
+
 WORKDIR /app
 RUN chown app:app /app
 USER app
 
 # Headless matplotlib (no DISPLAY, no GUI backend probing).
 ENV MPLBACKEND=Agg
+
+# Default output directory inside the container. run_simulation.py and
+# scripts/regenerate_outputs.py both read this when --output-dir /
+# --output-root aren't passed explicitly, so the standard recipe is
+# always:
+#   <runtime> --bind-mount-host-dir-to /data <image> ...
+ENV PYEXAMINE_OUTPUT_DIR=/data
 
 # uv keeps its bytecode / wheel cache under $HOME by default. Pinning
 # the venv inside /app means it lands on the same filesystem as the

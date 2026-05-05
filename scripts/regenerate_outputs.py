@@ -801,13 +801,29 @@ def parse_args():
             'n_seeds.'
         ),
     )
+    parser.add_argument(
+        '--output-root', type=str,
+        default=os.environ.get('PYEXAMINE_OUTPUT_DIR'),
+        help=(
+            'Root directory under which scenario subdirs are written. '
+            'Defaults to $PYEXAMINE_OUTPUT_DIR if set (the Docker / '
+            'Shifter image sets this to /data), otherwise the repo\'s '
+            'outputs/ folder. The script writes baselines + scenario '
+            'subdirs under this root identically regardless of where '
+            'the root lives.'
+        ),
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    out_root = _REPO_ROOT / 'outputs'
+    if args.output_root:
+        out_root = Path(args.output_root).resolve()
+    else:
+        out_root = _REPO_ROOT / 'outputs'
     out_root.mkdir(parents=True, exist_ok=True)
+    print(f"Output root: {out_root}")
 
     if args.n_seeds <= 1:
         # Single-seed legacy path: produces the canonical
