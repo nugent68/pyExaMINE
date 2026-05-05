@@ -50,8 +50,22 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+
+    # Detect single-seed vs ensemble mode from the scenarios index.json.
+    seeds_per_scenario = 1
+    scen_index = args.scenarios / "index.json"
+    if scen_index.is_file():
+        try:
+            with scen_index.open() as f:
+                idx = json.load(f)
+            seeds_per_scenario = int(idx.get("seeds_per_scenario", 1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    print(f"seeds_per_scenario = {seeds_per_scenario} "
+          f"(from {scen_index if scen_index.is_file() else 'default'})")
+
     minerals = args.mineral or list(ft.COUNTRIES_BY_MINERAL)
-    summary: dict = {}
+    summary: dict = {"seeds_per_scenario": seeds_per_scenario, "minerals": {}}
     for mineral in minerals:
         runs_dir = args.runs / mineral
         scen_path = args.scenarios / f"{mineral}.json"
@@ -61,9 +75,18 @@ def main() -> int:
         if not scen_path.is_file():
             print(f"[{mineral}] no scenarios at {scen_path}; skipping")
             continue
-        df = ds.build_mineral_dataset(
-            mineral, runs_dir, scen_path, n_steps=args.n_steps,
-        )
+
+        if seeds_per_scenario > 1:
+            df = ds.build_ensemble_dataset(
+                mineral, runs_dir, scen_path,
+                seeds_per_scenario=seeds_per_scenario,
+                n_steps=args.n_steps,
+            )
+        else:
+            df = ds.build_mineral_dataset(
+                mineral, runs_dir, scen_path, n_steps=args.n_steps,
+            )
+
         if df.empty:
             print(f"[{mineral}] empty dataset; skipping")
             continue
@@ -71,7 +94,7 @@ def main() -> int:
         df.to_parquet(out_path, index=False)
         print(f"[{mineral}] wrote {out_path} ({len(df)} rows, "
               f"{len(df.columns)} columns)")
-        summary[mineral] = {
+        summary["minerals"][mineral] = {
             "n_rows": int(len(df)),
             "feature_dim": ft.feature_dim(mineral),
             "target_names": list(tg.TARGET_NAMES),

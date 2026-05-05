@@ -56,6 +56,20 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+
+    # Detect ensemble vs single-seed mode from datasets/index.json
+    seeds_per_scenario = 1
+    ds_index = args.datasets / "index.json"
+    if ds_index.is_file():
+        try:
+            import json
+            with ds_index.open() as f:
+                idx = json.load(f)
+            seeds_per_scenario = int(idx.get("seeds_per_scenario", 1))
+        except (ValueError, OSError):
+            pass
+    print(f"seeds_per_scenario = {seeds_per_scenario} (from {ds_index})")
+
     minerals = args.mineral or list(ft.COUNTRIES_BY_MINERAL)
     for mineral in minerals:
         parquet = args.datasets / f"{mineral}.parquet"
@@ -63,12 +77,21 @@ def main() -> int:
             print(f"[{mineral}] no dataset at {parquet}; skipping")
             continue
         print(f"[{mineral}] training on {parquet}")
-        bundle = ts.train_mineral(
-            parquet, mineral,
-            test_frac=args.test_frac,
-            val_frac=args.val_frac,
-            seed=args.seed,
-        )
+        if seeds_per_scenario > 1:
+            bundle = ts.train_mineral_ensemble(
+                parquet, mineral,
+                seeds_per_scenario=seeds_per_scenario,
+                test_frac=args.test_frac,
+                val_frac=args.val_frac,
+                seed=args.seed,
+            )
+        else:
+            bundle = ts.train_mineral(
+                parquet, mineral,
+                test_frac=args.test_frac,
+                val_frac=args.val_frac,
+                seed=args.seed,
+            )
         out_path = args.out / f"{mineral}_scalar.pkl"
         ts.save_bundle(bundle, out_path)
         print(f"[{mineral}] saved {out_path} (+ metrics side-car)")

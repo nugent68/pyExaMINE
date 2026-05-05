@@ -6,8 +6,20 @@ Walks ``runs/<mineral>/<NNNNNN>.csv`` produced by
 ``surrogate.features.encode``, and extracts target values via
 ``surrogate.targets.extract_targets``.
 
-Result is one tabular dataset per mineral, suitable for LightGBM /
-sklearn / etc.
+Two dataset modes:
+
+* **Single-seed** (``seeds_per_scenario == 1``): one row per CSV.
+  Each target column carries the raw extracted value. Used by
+  the Phase-1 surrogate.
+
+* **Ensemble** (``seeds_per_scenario > 1``): every group of K
+  consecutive CSV indices is one underlying scenario; aggregate
+  the K runs into per-scenario mean and std for each target. Used
+  by the Phase-2 surrogate to predict not just expected response
+  but per-scenario uncertainty. ``recovered`` aggregates as a
+  rate (mean of 0/1). ``recovery_time_if_recovered`` aggregates
+  only over the recovered subset of seeds, with a per-row
+  ``..._n_recovered`` count to flag low-confidence aggregates.
 """
 
 from __future__ import annotations
@@ -118,20 +130,161 @@ def build_mineral_dataset(
     return pd.DataFrame(rows)
 
 
+def build_ensemble_dataset(
+    mineral: str,
+    runs_dir: Path,
+    scenarios_path: Path,
+    seeds_per_scenario: int,
+    n_steps: int = ft.DEFAULT_N_STEPS,
+) -> pd.DataFrame:
+    """Build per-scenario aggregated dataset from K-seed expanded runs.
+
+    Args:
+        mineral: e.g. ``'lithium'``.
+        runs_dir: directory containing ``<flat_idx:06d>.csv`` files.
+        scenarios_path: per-mineral JSON list, length ``n_unique * K``,
+            with seed replicas laid out contiguously per scenario.
+        seeds_per_scenario: K. Underlying scenario u occupies flat
+            indices ``[u*K, u*K + K - 1]``.
+        n_steps: simulation horizon.
+
+    Returns:
+        DataFrame with one row per UNIQUE scenario. Columns:
+            scenario_index : underlying-scenario id (0..n_unique-1)
+            n_seeds_used   : seeds whose CSVs were available + parsed
+            <feature_names> : ``F`` encoded features
+            <target>_mean, <target>_std for each target in TARGET_NAMES
+            recovery_time_if_recovered_n_recovered : seeds that recovered
+
+    Behavior on missing data:
+      * If <K/2 seeds parsed for a given scenario, the row is dropped.
+      * recovery_time_if_recovered_mean is NaN if no seed in the
+        ensemble recovered. Train-time code filters this column.
+    """
+    with scenarios_path.open() as f:
+        all_entries = json.load(f)
+    if not isinstance(all_entries, list):
+        raise ValueError(f"{scenarios_path}: top-level must be a list")
+
+    K = int(seeds_per_scenario)
+    if K <= 0:
+        raise ValueError(f"seeds_per_scenario must be positive, got {K}")
+
+    n_unique, rem = divmod(len(all_entries), K)
+    if rem:
+        raise ValueError(
+            f"{scenarios_path}: {len(all_entries)} entries is not a "
+            f"multiple of seeds_per_scenario={K}"
+        )
+
+    feat_names = ft.feature_names(mineral)
+    rows: list[dict] = []
+    n_dropped = 0
+
+    for u in range(n_unique):
+        per_seed: list[dict] = []
+        for k in range(K):
+            flat_idx = u * K + k
+            csv_path = runs_dir / f"{flat_idx:06d}.csv"
+            if not csv_path.is_file():
+                continue
+            try:
+                df = pd.read_csv(csv_path, usecols=_NEEDED_COLUMNS)
+            except (ValueError, FileNotFoundError):
+                continue
+            t = tg.extract_targets(df, all_entries[flat_idx])
+            # Skip seeds where every target came back NaN -- pathological.
+            if any(np.isfinite(v) for v in t.values()):
+                per_seed.append(t)
+
+        if len(per_seed) < max(2, K // 2):
+            n_dropped += 1
+            continue
+
+        # Encode features once from the first seed's scenario (all K
+        # share the same feature vector by construction).
+        scen = all_entries[u * K]
+        x = ft.encode(scen, n_steps=n_steps)
+        row: dict = {"scenario_index": u, "n_seeds_used": len(per_seed)}
+        for j, name in enumerate(feat_names):
+            row[name] = float(x[j])
+
+        for target in tg.TARGET_NAMES:
+            vals = np.array([t[target] for t in per_seed], dtype=np.float64)
+            if target == "recovery_time_if_recovered":
+                # Aggregate only over recovered seeds. Other seeds
+                # have NaN here and don't contribute -- the
+                # ``recovered`` rate captures that dimension.
+                finite = vals[np.isfinite(vals)]
+                if finite.size > 0:
+                    row[f"{target}_mean"] = float(np.mean(finite))
+                    row[f"{target}_std"]  = float(np.std(finite, ddof=0))
+                else:
+                    row[f"{target}_mean"] = float("nan")
+                    row[f"{target}_std"]  = float("nan")
+                row[f"{target}_n_recovered"] = int(finite.size)
+            else:
+                # Replace any per-seed NaN with the run's nan-mean to
+                # avoid one bad seed killing the whole row. Practical
+                # NaN rate here should be ~0.
+                if not np.all(np.isfinite(vals)):
+                    finite = vals[np.isfinite(vals)]
+                    if finite.size == 0:
+                        row[f"{target}_mean"] = float("nan")
+                        row[f"{target}_std"]  = float("nan")
+                        continue
+                    vals = finite
+                row[f"{target}_mean"] = float(np.mean(vals))
+                row[f"{target}_std"]  = float(np.std(vals, ddof=0))
+
+        rows.append(row)
+
+    print(f"[{mineral}] {len(rows)} usable scenarios, {n_dropped} dropped "
+          f"(K={K} seeds/scenario)")
+    return pd.DataFrame(rows)
+
+
 def split_xy(
     df: pd.DataFrame, mineral: str,
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:
-    """Split a mineral dataset into feature matrix X and target matrix Y.
+    """Split a single-seed dataset into feature matrix X and target matrix Y.
 
     Returns ``(X, Y, feature_names, target_names)`` where X is
     ``(N, F)`` float32 and Y is ``(N, len(TARGET_NAMES))`` float32.
     The order of ``feature_names`` matches ``surrogate.features.feature_names``,
     so a saved model can verify input alignment at inference time.
+
+    For ensemble datasets (with ``<target>_mean`` / ``<target>_std``
+    columns) use ``split_xy_ensemble`` instead.
     """
     feat_names = ft.feature_names(mineral)
     X = df[feat_names].to_numpy(dtype=np.float32)
     Y = df[tg.TARGET_NAMES].to_numpy(dtype=np.float32)
     return X, Y, feat_names, list(tg.TARGET_NAMES)
+
+
+def split_xy_ensemble(
+    df: pd.DataFrame, mineral: str,
+) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
+    """Split an ensemble dataset (mean+std cols) into X plus per-target arrays.
+
+    Returns ``(X, Y_mean, Y_std, feature_names)`` where:
+        * ``X`` has shape ``(N, F)``, float32.
+        * ``Y_mean`` is a dict ``target -> (N,) float32`` with NaNs left in.
+        * ``Y_std``  is the same shape, also leaving NaNs.
+
+    Targets with all-NaN columns (e.g. recovery_time_if_recovered_mean
+    where no seed recovered) survive here; downstream training code
+    is responsible for masking those rows out.
+    """
+    feat_names = ft.feature_names(mineral)
+    X = df[feat_names].to_numpy(dtype=np.float32)
+    Y_mean: dict[str, np.ndarray] = {}
+    Y_std: dict[str, np.ndarray] = {}
+    for t in tg.TARGET_NAMES:
+        Y_mean[t] = df[f"{t}_mean"].to_numpy(dtype=np.float32)
+        Y_std[t]  = df[f"{t}_std"].to_numpy(dtype=np.float32)
+    return X, Y_mean, Y_std, feat_names
 
 
 def train_test_split_indices(

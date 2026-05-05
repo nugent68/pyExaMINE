@@ -2,27 +2,37 @@
 
 For each scenario we pick a "shock window" -- the steps where the
 embargo / chokepoint disruption is active, plus a 24-week recovery
-tail. All five targets are computed inside this window. For baseline
+tail. All targets are computed inside this window. For baseline
 scenarios with no events, we fall back to a fixed mid-simulation
 window so the surrogate has consistent training labels.
 
-The five targets:
+The five targets (post-Phase-2 reframing):
 
   ``mean_price_in_window``           mean Global_Price over the window ($/t)
-  ``delta_pct_vs_baseline``          (in_window_mean - pre_window_mean) /
-                                     pre_window_mean * 100
   ``peak_price``                     max Global_Price over the window ($/t)
-  ``recovery_time_steps``            steps after the last event ends until
-                                     price returns within 5% of pre-event mean.
-                                     If the run ends before recovery, this is
-                                     set to ``n_steps`` (the simulation horizon)
-                                     -- a numeric upper bound rather than a
-                                     ``-1`` sentinel, which makes the column
-                                     well-behaved as a regression target.
-                                     Callers who want to know "did it recover?"
-                                     should test ``recovery_time_steps < n_steps``.
   ``unfulfilled_fraction_in_window`` sum(unfulfilled) / sum(fulfilled +
                                      unfulfilled), as a fraction in [0, 1]
+  ``recovered``                      1.0 if price returned to within 5% of
+                                     the pre-event mean before the run
+                                     ended; 0.0 otherwise. Trained as a
+                                     classification (or rate-regression
+                                     when aggregated across seeds).
+  ``recovery_time_if_recovered``     If recovered: number of steps after
+                                     the last event ended before recovery.
+                                     If not recovered: NaN. Aggregating
+                                     across an ensemble takes the mean
+                                     over the recovered subset only;
+                                     the ``recovered`` rate captures the
+                                     "what fraction of seeds recovered"
+                                     dimension separately.
+
+Phase-1 targets that were dropped:
+
+  ``delta_pct_vs_baseline`` (was ratio (in_window - pre_window) / pre_window
+  * 100) -- straddled zero and inflated MAPE without adding signal beyond
+  what ``mean_price_in_window`` already provides. Inference callers that
+  want the percent shift can compute it from mean_price + a separately-
+  computed pre-event baseline.
 
 These are deliberately self-consistent: each scenario provides its own
 pre-event baseline (so we don't need a paired no-shock run), and the
@@ -47,28 +57,49 @@ _BASELINE_WINDOW_HALFWIDTH = 26
 _WINDOW_RECOVERY_TAIL = 24
 
 #: Pre-event baseline window: the 26 steps before the first event,
-#: used as the reference for delta_pct_vs_baseline and recovery_time_steps.
+#: used as the reference for the recovery threshold check.
 _PRE_EVENT_LOOKBACK = 26
 
-#: Fraction of pre-event mean defining "recovered" for recovery_time_steps.
+#: Fraction of pre-event mean defining "recovered" for the recovery
+#: target. Price returns within +/- this fraction => recovered.
 _RECOVERY_TOLERANCE = 0.05
 
-#: Legacy sentinel for "did not recover before run ended". Retained as a
-#: named constant for any downstream code that may still test against it,
-#: but ``extract_targets`` no longer emits it -- unrecovered runs now get
-#: ``n_steps`` as a numeric cap so the surrogate's regression target
-#: stays well-behaved.
+#: Legacy Phase-1 sentinel ("did not recover before run ended").
+#: Phase-2 splits recovery into a binary ``recovered`` flag plus a
+#: conditional ``recovery_time_if_recovered`` regression target,
+#: making this constant unused by the current target schema.
 RECOVERY_NEVER: int = -1
 
 
-#: Names of the five scalar targets, in stable order. Used by
-#: ``train_scalar.py`` to fit one model per target.
+#: Names of the scalar targets the surrogate learns, in stable order.
+#: Used by ``train_scalar.py`` to fit one model per target. The
+#: ``recovered`` target is a probability / fraction in [0, 1]; the
+#: others are real-valued.
 TARGET_NAMES: list[str] = [
     "mean_price_in_window",
-    "delta_pct_vs_baseline",
     "peak_price",
-    "recovery_time_steps",
     "unfulfilled_fraction_in_window",
+    "recovered",
+    "recovery_time_if_recovered",
+]
+
+
+#: Subset of TARGET_NAMES that are real-valued regression targets the
+#: surrogate predicts mean + std for (across-seed ensemble).
+REGRESSION_TARGETS: list[str] = [
+    "mean_price_in_window",
+    "peak_price",
+    "unfulfilled_fraction_in_window",
+    "recovery_time_if_recovered",
+]
+
+
+#: Subset of TARGET_NAMES that are bounded-rate targets (in [0, 1]).
+#: For these the per-seed value is 0.0 / 1.0 and the cross-seed mean
+#: is the recovery rate -- the surrogate's mean prediction on these
+#: is the predicted probability.
+RATE_TARGETS: list[str] = [
+    "recovered",
 ]
 
 
@@ -110,11 +141,15 @@ def scenario_window(scenario: dict) -> tuple[int, int]:
 def pre_event_window(scenario: dict) -> tuple[int, int]:
     """Return the 26-step window immediately before the first event.
 
+    Used by ``extract_targets`` as the reference for the recovery
+    threshold check (price within +/-5% of this window's mean ==
+    recovered).
+
     For baseline scenarios with no events, returns a window of equal
-    length placed just before scenario_window so the "delta vs pre"
-    metric still has a denominator. This is intentionally NOT the
-    same as scenario_window -- we want the *pre-event* state to
-    serve as the reference price.
+    length placed just before scenario_window so the recovery test
+    still has a sensible denominator. Intentionally NOT the same as
+    scenario_window -- we want the *pre-event* state to serve as the
+    reference, not the in-shock state.
     """
     events_starts = []
     for e in scenario.get("embargoes", []) or []:
@@ -190,25 +225,32 @@ def extract_targets(df: pd.DataFrame, scenario: dict) -> dict[str, float]:
 
     if pre_window_price.size > 0:
         mean_pre = float(np.mean(pre_window_price))
-        delta_pct = ((mean_in - mean_pre) / mean_pre * 100.0) if mean_pre > 0 else float("nan")
     else:
         mean_pre = float("nan")
-        delta_pct = float("nan")
 
-    # Recovery time: how long after the last event end before price
-    # returns within +/-5% of the pre-event mean. If the run ends before
-    # the price recovers, we cap at ``n_steps`` (the simulation horizon
-    # in the scenario) instead of emitting a -1 sentinel, so the column
-    # stays well-behaved as a regression target. Callers can detect
-    # "didn't recover" by testing ``recovery_time_steps >= n_steps``.
+    # Recovery: did the price return to within +/- _RECOVERY_TOLERANCE
+    # of the pre-event mean before the run ended?
+    #   recovered = 1.0 if yes, 0.0 if no
+    #   recovery_time_if_recovered = steps after last event end (or NaN
+    #     when not recovered; aggregation across seeds takes the mean
+    #     over the recovered subset only)
+    # Baseline scenarios with no events are flagged "recovered=1.0,
+    # time=0" by convention so the targets stay finite.
     last_end = _last_event_end(scenario)
-    n_steps = int(scenario.get("n_steps", 1352))
     if last_end is None or not np.isfinite(mean_pre) or mean_pre <= 0:
-        recovery = 0
+        recovered = 1.0
+        rec_time = 0.0
     else:
         tail = _safe_segment(df, last_end, len(df), "Global_Price")
-        recovered = np.where(np.abs(tail - mean_pre) / mean_pre < _RECOVERY_TOLERANCE)[0]
-        recovery = int(recovered[0]) if recovered.size > 0 else n_steps
+        recovered_idx = np.where(
+            np.abs(tail - mean_pre) / mean_pre < _RECOVERY_TOLERANCE
+        )[0]
+        if recovered_idx.size > 0:
+            recovered = 1.0
+            rec_time = float(recovered_idx[0])
+        else:
+            recovered = 0.0
+            rec_time = float("nan")
 
     # Unfulfilled fraction: integrate over the same window.
     fulfilled = _safe_segment(df, win_lo, win_hi, "Fulfilled_Demand_Units")
@@ -220,10 +262,10 @@ def extract_targets(df: pd.DataFrame, scenario: dict) -> dict[str, float]:
 
     return {
         "mean_price_in_window":           mean_in,
-        "delta_pct_vs_baseline":          delta_pct,
         "peak_price":                     peak_in,
-        "recovery_time_steps":            float(recovery),
         "unfulfilled_fraction_in_window": unfulfilled_frac,
+        "recovered":                      recovered,
+        "recovery_time_if_recovered":     rec_time,
     }
 
 

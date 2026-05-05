@@ -124,14 +124,30 @@ class MineralModelBundle:
 
     Pickled as a single file. ``predict.py`` loads this and calls each
     booster on the encoded scenario.
+
+    Phase-1 (single-seed) layout:
+        boosters    = {target_name: Booster}            # one per target
+        metrics     = {target_name: TargetMetrics}
+
+    Phase-2 (ensemble) layout:
+        boosters    = {target_name: {'mean': Booster,
+                                     'std':  Booster}}  # two per target
+        metrics     = {target_name: {'mean': TargetMetrics,
+                                     'std':  TargetMetrics}}
+    The bundle ``ensemble`` flag tells ``predict.py`` which layout to
+    expect. Backwards-compat: old single-seed pickles default
+    ``ensemble=False`` and predict.py treats ``boosters[t]`` as the
+    raw mean predictor.
     """
     mineral: str
     feature_names: list[str]
     target_names: list[str]
-    boosters: dict[str, lgb.Booster]
-    metrics: dict[str, TargetMetrics]
+    boosters: dict
+    metrics: dict
     train_test_split_seed: int
     n_rows: int
+    ensemble: bool = False
+    seeds_per_scenario: int = 1
 
 
 def train_mineral(
@@ -185,20 +201,122 @@ def train_mineral(
     )
 
 
+def train_mineral_ensemble(
+    parquet_path: Path,
+    mineral: str,
+    seeds_per_scenario: int,
+    test_frac: float = 0.10,
+    val_frac: float = 0.10,
+    seed: int = 0,
+    params: dict | None = None,
+) -> MineralModelBundle:
+    """Train Phase-2 ensemble surrogates: per-target mean + std boosters.
+
+    Reads an ensemble-aggregated parquet (one row per *underlying*
+    scenario, with ``<target>_mean`` and ``<target>_std`` columns) and
+    fits two LightGBM regressors per target -- one predicting the
+    expected value, one predicting the seed-to-seed standard deviation.
+    The pair lets ``predict.py`` return ``(predicted_mean,
+    predicted_std)`` for every target on a brand-new scenario.
+
+    Special handling per target:
+      * ``recovered``: the per-scenario mean is a recovery rate in
+        [0, 1]; LightGBM regression on it is fine.
+      * ``recovery_time_if_recovered``: rows where no seed recovered
+        have NaN in the mean column. We mask those rows out of the
+        training / validation / test splits for this target only, so
+        the mean booster is never asked to learn from a NaN.
+    """
+    df = pd.read_parquet(parquet_path)
+    if df.empty:
+        raise ValueError(f"{parquet_path} is empty")
+
+    X, Y_mean, Y_std, feature_names = ds.split_xy_ensemble(df, mineral)
+
+    train_idx, val_idx, test_idx = ds.train_test_split_indices(
+        n=len(df), test_frac=test_frac, val_frac=val_frac, seed=seed,
+    )
+    X_tr, X_val, X_te = X[train_idx], X[val_idx], X[test_idx]
+
+    boosters: dict[str, dict[str, lgb.Booster]] = {}
+    metrics: dict[str, dict[str, TargetMetrics]] = {}
+
+    for target in tg.TARGET_NAMES:
+        boosters[target] = {}
+        metrics[target] = {}
+        for kind in ("mean", "std"):
+            y_full = Y_mean[target] if kind == "mean" else Y_std[target]
+            # Drop NaN rows from each split independently. With
+            # default split this only affects recovery_time_if_recovered
+            # (rows where no seed recovered).
+            def _slice(idx):
+                yi = y_full[idx]
+                mask = np.isfinite(yi)
+                return X[idx][mask], yi[mask]
+            X_tr_t, y_tr_t = _slice(train_idx)
+            X_val_t, y_val_t = _slice(val_idx)
+            X_te_t,  y_te_t  = _slice(test_idx)
+            if len(y_tr_t) < 50 or len(y_te_t) < 5:
+                # Not enough finite rows to fit / evaluate. Skip silently
+                # but note in metrics.
+                metrics[target][kind] = TargetMetrics(
+                    rmse=float("nan"), mae=float("nan"),
+                    mape=float("nan"), r2=float("nan"),
+                    n_train=int(len(y_tr_t)), n_val=int(len(y_val_t)),
+                    n_test=int(len(y_te_t)), best_iteration=0,
+                )
+                continue
+            booster, m = train_one_target(
+                X_tr_t, y_tr_t, X_val_t, y_val_t, X_te_t, y_te_t,
+                feature_names=feature_names, params=params,
+            )
+            boosters[target][kind] = booster
+            metrics[target][kind] = m
+            print(
+                f"  [{mineral}/{target:<32s}/{kind:<4s}] "
+                f"rmse={m.rmse:>10.3f}  mae={m.mae:>10.3f}  "
+                f"mape={m.mape:>6.2f}%  r2={m.r2:>+0.3f}  "
+                f"iters={m.best_iteration}  N_te={m.n_test}"
+            )
+
+    return MineralModelBundle(
+        mineral=mineral,
+        feature_names=feature_names,
+        target_names=list(tg.TARGET_NAMES),
+        boosters=boosters,
+        metrics=metrics,
+        train_test_split_seed=seed,
+        n_rows=int(len(df)),
+        ensemble=True,
+        seeds_per_scenario=seeds_per_scenario,
+    )
+
+
 def save_bundle(bundle: MineralModelBundle, out_path: Path) -> None:
     """Persist a trained bundle to disk + write a side-car JSON of metrics."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("wb") as f:
         pickle.dump(bundle, f)
     side_car = out_path.with_suffix(".metrics.json")
+
+    # Layout is target -> TargetMetrics  (single-seed)
+    #             or target -> {'mean': TargetMetrics, 'std': TargetMetrics}
+    if bundle.ensemble:
+        target_metrics = {
+            name: {kind: asdict(m) for kind, m in d.items()}
+            for name, d in bundle.metrics.items()
+        }
+    else:
+        target_metrics = {name: asdict(m) for name, m in bundle.metrics.items()}
+
     metrics_payload = {
         "mineral": bundle.mineral,
         "n_rows": bundle.n_rows,
+        "ensemble": bundle.ensemble,
+        "seeds_per_scenario": bundle.seeds_per_scenario,
         "train_test_split_seed": bundle.train_test_split_seed,
         "feature_dim": len(bundle.feature_names),
-        "target_metrics": {
-            name: asdict(m) for name, m in bundle.metrics.items()
-        },
+        "target_metrics": target_metrics,
     }
     with side_car.open("w") as f:
         json.dump(metrics_payload, f, indent=2)

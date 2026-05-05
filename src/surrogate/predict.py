@@ -66,10 +66,20 @@ def predict(
         n_steps: simulation horizon (must match training).
 
     Returns:
-        A dict containing one float per ``TARGET_NAMES``, plus a
-        ``_warnings`` list of human-readable extrapolation messages.
-        Raises ``KeyError`` if ``scenario['mineral']`` has no trained
-        model in ``models``.
+        For Phase-1 single-seed bundles, one float per target (the
+        bundle's mean prediction) plus a ``_warnings`` list.
+
+        For Phase-2 ensemble bundles, two floats per target -- the
+        predicted ensemble mean and the predicted seed-to-seed std --
+        suffixed ``"_mean"`` / ``"_std"``. Where the std-prediction
+        booster wasn't trained (e.g. recovery_time_if_recovered when
+        too few rows had a finite mean), the std field is NaN. The
+        ``recovered_mean`` field is interpretable as the predicted
+        probability that the price returns to within +/-5% of the
+        pre-event baseline before the run ends.
+
+    Raises ``KeyError`` if ``scenario['mineral']`` has no trained
+    model in ``models``.
     """
     mineral = scenario.get("mineral")
     if mineral not in models:
@@ -89,10 +99,28 @@ def predict(
 
     X = ft.encode(scenario, n_steps=n_steps).reshape(1, -1)
     out: dict[str, Any] = {}
-    for target, booster in bundle.boosters.items():
-        out[target] = float(
-            booster.predict(X, num_iteration=booster.best_iteration)[0]
-        )
+
+    if getattr(bundle, "ensemble", False):
+        # Phase-2 layout: bundle.boosters[target] = {'mean': B, 'std': B}
+        for target, kind_to_booster in bundle.boosters.items():
+            for kind in ("mean", "std"):
+                booster = kind_to_booster.get(kind)
+                key = f"{target}_{kind}"
+                if booster is None:
+                    out[key] = float("nan")
+                else:
+                    out[key] = float(
+                        booster.predict(
+                            X, num_iteration=booster.best_iteration
+                        )[0]
+                    )
+    else:
+        # Phase-1 layout: bundle.boosters[target] = Booster
+        for target, booster in bundle.boosters.items():
+            out[target] = float(
+                booster.predict(X, num_iteration=booster.best_iteration)[0]
+            )
+
     out["_warnings"] = ft.support_check(scenario)
     return out
 
