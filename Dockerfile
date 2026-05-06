@@ -65,14 +65,18 @@ ENV UV_LINK_MODE=copy \
 
 # 1. Install project dependencies first. Copying just the lockfile +
 #    pyproject.toml means edits to source code don't bust this layer.
+#    --extra trajectory pulls torch in for the trajectory surrogate;
+#    on linux/amd64 uv resolves to the CUDA-12 torch wheel, which is
+#    what we want for NERSC GPU nodes (and harmless on CPU nodes -- it
+#    just doesn't initialise CUDA).
 COPY --chown=app:app pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --extra trajectory
 
 # 2. Copy the rest of the project + install pyexamine itself into the
 #    venv (records package metadata; lets `python -m ...` find modules
 #    via the installed entry-points if they're added later).
 COPY --chown=app:app . .
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra trajectory
 
 ENTRYPOINT ["uv", "run", "python", "run_simulation.py"]
 CMD ["--all", "--steps", "200", "--seed", "42", "--no-viz"]
