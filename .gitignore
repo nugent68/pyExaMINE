@@ -20,3 +20,17 @@ __pycache__/
 # artefacts (summary CSV + band PNG) live in outputs/ alongside the
 # regular scenario outputs.
 ensemble_runs/
+
+# Surrogate-training artefacts. The .pkl bundles are large (~10 MB
+# each) and regenerable from the per-mineral parquets. The canonical
+# copy lives on NERSC at
+#   /global/cfs/cdirs/amsc001/www/surrogate_data/surrogate_models/
+# (web-portal: https://portal.nersc.gov/project/amsc001/surrogate_data/).
+# We DO commit the small `*_scalar.metrics.json` side-cars so anyone
+# can see at a glance what the trained ensemble's held-out metrics
+# look like without pulling 31 MB of pickles.
+surrogate_models/*.pkl
+
+# Local cache directory for parquets pulled from CFS during ad-hoc
+# training runs. The canonical parquets live under CFS datasets/.
+datasets_perlmutter/
