@@ -21,6 +21,15 @@
 # Shifter (read-only image FS) without code changes.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+# Native libraries that pure-Python wheels link against. LightGBM's
+# wheel is dynamically linked against libgomp (OpenMP runtime), which
+# the slim base image doesn't ship. Install before switching to the
+# unprivileged user.
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Run as a non-root user. The container's UID/GID can be overridden at
 # build time so bind-mounted output volumes keep host ownership.
 ARG UID=1000
