@@ -24,7 +24,7 @@
 # (2 nodes x 128 cores). Typical 5000-missing gap-fill -> ~20 min
 # wall, comfortable in the 30-min debug cap.
 #
-#SBATCH --image=docker:nugent68/pyexamine:ed6895c
+#SBATCH --image=docker:nugent68/pyexamine:2e5a768
 #SBATCH --account=amsc001
 #SBATCH --constraint=cpu
 #SBATCH --qos=debug
@@ -40,8 +40,7 @@ set -euo pipefail
 
 : "${MINERAL:?must export MINERAL=lithium|nickel|platinum}"
 : "${PARALLELISM:=128}"
-
-DATA_ROOT="${CFS}/amsc001/www/surrogate_data"
+: "${DATA_ROOT:=${CFS}/amsc001/www/surrogate_data}"
 MISSING_FILE="${DATA_ROOT}/missing_${MINERAL}.txt"
 mkdir -p logs
 
