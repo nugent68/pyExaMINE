@@ -37,3 +37,11 @@ surrogate_models/quantile_summary.json
 # Local cache directory for parquets pulled from CFS during ad-hoc
 # training runs. The canonical parquets live under CFS datasets/.
 datasets_perlmutter/
+
+# Trajectory-surrogate model bundles. Same convention as
+# surrogate_models/: only the *_trajectory.metrics.json side-cars are
+# tracked; the .pkl bundles (with the torch state_dict embedded) are
+# regenerable from the per-mineral parquets / runs and live on
+# CFS / Lustre.
+trajectory_models/*.pkl
+trajectory_models_smoke/

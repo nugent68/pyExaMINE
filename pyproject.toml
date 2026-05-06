@@ -5,7 +5,7 @@ description = "Agent-based model of critical minerals supply chains"
 authors = [
     { name = "Peter Nugent", email = "nugent68@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "lightgbm>=4.0",
     "matplotlib>=3.7",
@@ -15,4 +15,18 @@ dependencies = [
     "pyarrow>=14",
     "scipy>=1.11",
     "seaborn>=0.13",
+]
+
+[project.optional-dependencies]
+# Trajectory surrogate (DeepONet etc.). Pulled in only when training
+# trajectory models -- pyExaMINE itself runs without these. Pinned at
+# the last torch version with Intel-macOS wheels; modern Linux/ARM
+# Macs / NERSC GPU nodes are happy on the same constraint.
+trajectory = [
+    # torch 2.2 was the last release with Intel-macOS wheels and was
+    # compiled against NumPy 1.x; the numpy<2 pin below keeps the
+    # binary ABI happy.  On Linux / ARM-Mac uv picks the latest
+    # compatible torch.  NERSC nodes are Linux-x86_64.
+    "torch>=2.0,<2.3",
+    "numpy<2",
 ]
