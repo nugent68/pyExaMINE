@@ -1,63 +1,93 @@
 # Trained surrogate model bundles
 
-This directory holds the `*_scalar.metrics.json` side-cars for every
-trained per-mineral LightGBM bundle. The actual `*_scalar.pkl`
-pickles are **gitignored** (10+ MB each, regenerable from the
-per-mineral parquets). To use the surrogate, fetch them from NERSC
-first.
+This directory holds the `*.metrics.json` side-cars for every trained
+per-mineral LightGBM bundle. Two bundle layouts coexist:
+
+* **Point bundles** &mdash; `<mineral>_scalar.pkl` &mdash; one mean
+  booster + one std booster per scalar target. Returns
+  `(predicted_mean, predicted_std)` per target.
+* **CQR bundles** &mdash; `<mineral>_quantile.pkl` &mdash; three
+  LightGBM quantile boosters (q&#x2080;.&#x2080;&#x2085;, q&#x2080;.&#x2085;,
+  q&#x2080;.&#x2089;&#x2085;) plus a held-out conformal calibration
+  offset. Returns `[lo, median, hi]` with a distribution-free 90%
+  marginal-coverage guarantee.
+
+The `.pkl` pickles are gitignored (10&ndash;25 MB each, regenerable
+from the per-mineral parquets). Canonical copies live on NERSC CFS;
+fetch them before calling `load_models`.
 
 ## Canonical location
-
-The trained bundles live on NERSC CFS at:
 
 ```
 /global/cfs/cdirs/amsc001/www/surrogate_data/surrogate_models/
 ```
 
-which is web-portal visible at
+Web-portal mirror:
 <https://portal.nersc.gov/project/amsc001/surrogate_data/surrogate_models/>.
 
 ## Pulling locally
 
 ```bash
-# Adjust to your scp profile / NERSC user as needed.
-scp -r perlmutter.nersc.gov:/global/cfs/cdirs/amsc001/www/surrogate_data/surrogate_models/*.pkl \
+mkdir -p surrogate_models
+scp 'perlmutter.nersc.gov:/global/cfs/cdirs/amsc001/www/surrogate_data/surrogate_models/*.pkl' \
     surrogate_models/
 ```
 
-After that, `from src.surrogate.predict import load_models, predict`
-discovers the bundles by glob:
+Or over HTTP:
+
+```bash
+BASE=https://portal.nersc.gov/project/amsc001/surrogate_data/surrogate_models
+for m in lithium nickel platinum; do
+  curl -O "$BASE/${m}_scalar.pkl"
+  curl -O "$BASE/${m}_quantile.pkl"
+done
+```
+
+## Loading
 
 ```python
 from src.surrogate.predict import load_models, predict
-models = load_models("surrogate_models/")
-out = predict({"mineral": "lithium",
-               "embargoes": [{"country": "Chile",
-                              "start_step": 676, "duration": 52}]},
-              models)
+
+# Point bundle: returns <target>_mean + <target>_std.
+pt = load_models("surrogate_models/", kind="point")
+predict({"mineral": "lithium",
+         "embargoes": [{"country": "Chile",
+                        "start_step": 676, "duration": 52}]}, pt)
+
+# CQR bundle: returns <target>_lo + <target>_med + <target>_hi
+# (90% interval, conformal-corrected).
+qq = load_models("surrogate_models/", kind="quantile")
+predict({...}, qq)
+
+# Auto: load both; quantile takes precedence per mineral.
+models = load_models("surrogate_models/", kind="auto")
 ```
 
 ## What's currently trained
 
-The committed `*.metrics.json` side-cars summarise the held-out
-test-set performance per (target, kind) for the latest bundle. As of
-the Phase-2 ensemble training (commit will follow this README):
+Phase-2 ensemble training at `seeds_per_scenario = 20` over 2,000
+unique scenarios per mineral.
 
-* All three minerals trained at `seeds_per_scenario = 20` over
-  ~2,000 unique scenarios per mineral.
-* Headline mean targets (`mean_price_in_window_mean`,
-  `peak_price_mean`, `unfulfilled_fraction_in_window_mean`) hit
-  R² 0.87-0.96 on held-out test rows.
-* `recovered_mean` (recovery probability) hits R² 0.64-0.82.
-* The `*_std` side of each booster is intrinsically noisier
-  (R² 0.45-0.78) but lets `predict()` return a real
-  ``(predicted_mean, predicted_std)`` tuple per target on a brand-new
-  scenario.
-* `recovery_time_if_recovered` is the weakest target (R² 0.20-0.46);
-  treat it as advisory.
+### Point bundles &mdash; held-out R&sup2; on the test split
 
-See the metrics JSONs themselves for the full per-target /
-per-`kind` breakdown.
+| Target | Li | Ni | Pt |
+|---|---:|---:|---:|
+| mean_price_in_window | 0.947 | 0.938 | 0.875 |
+| peak_price | 0.960 | 0.952 | 0.920 |
+| unfulfilled_fraction | 0.867 | 0.741 | 0.874 |
+| recovered (probability) | 0.817 | 0.774 | 0.635 |
+| recovery_time_if_recovered | 0.201 | 0.461 | 0.433 |
+
+Mean MAPEs on the price targets sit at 2&ndash;6%.
+
+### CQR bundles &mdash; conformal coverage at &alpha; = 0.10
+
+Target = 90% interval coverage. Mean conformal coverage = **89.7%**;
+mean width-to-y-range = **0.41**.
+
+See the `*_quantile.metrics.json` side-cars for the full
+target-by-target breakdown (raw vs conformal coverage, mean width,
+median RMSE).
 
 ## Regenerating from scratch
 
@@ -70,11 +100,17 @@ uv run python scripts/build_dataset.py \
     --scenarios $CFS/amsc001/www/surrogate_data/scenarios \
     --out $CFS/amsc001/www/surrogate_data/datasets
 
-# 2. Train the per-mineral ensembles.
+# 2a. Train point ensembles.
 uv run python scripts/train_surrogate.py \
     --datasets $CFS/amsc001/www/surrogate_data/datasets \
     --out surrogate_models/
+
+# 2b. Train CQR ensembles (~1 min for all three minerals).
+uv run python scripts/train_quantile.py \
+    --datasets $CFS/amsc001/www/surrogate_data/datasets \
+    --out surrogate_models/ \
+    --alpha 0.10
 ```
 
-Or submit `scripts/perlmutter_build_train.slurm` to do both inside
-Shifter on Perlmutter.
+`scripts/perlmutter_build_train.slurm` runs steps 1 and 2a inside
+Shifter on Perlmutter; step 2b is fast enough to run on a login node.

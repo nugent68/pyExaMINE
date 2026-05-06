@@ -30,6 +30,9 @@ ensemble_runs/
 # can see at a glance what the trained ensemble's held-out metrics
 # look like without pulling 31 MB of pickles.
 surrogate_models/*.pkl
+# Cached quantile training summary; regenerable from the per-bundle
+# .metrics.json side-cars.
+surrogate_models/quantile_summary.json
 
 # Local cache directory for parquets pulled from CFS during ad-hoc
 # training runs. The canonical parquets live under CFS datasets/.

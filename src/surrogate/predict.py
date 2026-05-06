@@ -11,15 +11,25 @@ Two ways to use:
   ...          "embargoes": [{"country": "Chile",
   ...                         "start_step": 676, "duration": 52}]},
   ...         models)
-  {'mean_price_in_window': 18234.7,
-   'delta_pct_vs_baseline': 12.4,
+  {'mean_price_in_window_mean': 14892.7,
+   'mean_price_in_window_std':    725.1,
    ...
    '_warnings': []}
 
 * **As a CLI.** ``scripts/predict_surrogate.py`` accepts a JSON file
   or inline JSON and prints the prediction dict.
 
-The returned dict includes a ``_warnings`` key with any
+The output schema depends on which bundle was loaded:
+
+* **Phase-1 single-seed** (``MineralModelBundle.ensemble == False``):
+  one float per target.
+* **Phase-2 ensemble** (``MineralModelBundle.ensemble == True``):
+  ``<target>_mean`` and ``<target>_std`` per target.
+* **CQR quantile** (``MineralQuantileBundle``):
+  ``<target>_lo``, ``<target>_med``, ``<target>_hi`` per target,
+  conformal-corrected to ``1 - alpha`` marginal coverage.
+
+The returned dict always includes a ``_warnings`` key with any
 ``support_check`` flags (e.g., out-of-distribution durations, unknown
 countries). Per the project's "extrapolate with warning" policy, the
 surrogate still returns a numeric prediction in those cases; the
@@ -30,56 +40,75 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Any
-
-import numpy as np
+from typing import Any, Union
 
 from . import features as ft
 from . import train_scalar as ts
+from . import quantile as qt
 
 
-def load_models(models_dir: Path) -> dict[str, ts.MineralModelBundle]:
-    """Load every ``<mineral>_scalar.pkl`` under a directory.
+#: Bundle types ``predict`` knows how to dispatch on.
+Bundle = Union[ts.MineralModelBundle, qt.MineralQuantileBundle]
 
-    Returns a dict keyed by mineral name. Missing minerals are silently
-    omitted so the API works even with partial training.
+
+def load_models(
+    models_dir: Path,
+    kind: str = "auto",
+) -> dict[str, Bundle]:
+    """Load every trained bundle under a directory.
+
+    Filename conventions:
+      * ``<mineral>_scalar.pkl``    -- Phase-1 / Phase-2 mean+std bundle.
+      * ``<mineral>_quantile.pkl``  -- Phase-2 quantile (CQR) bundle.
+
+    Args:
+        models_dir: directory holding the pickled bundles.
+        kind: which bundle layout to prefer when both exist for the
+            same mineral. One of ``"point"`` (load only ``*_scalar.pkl``),
+            ``"quantile"`` (load only ``*_quantile.pkl``), or ``"auto"``
+            (load both; quantile takes precedence per mineral).
+
+    Returns:
+        Dict keyed by mineral name. Missing minerals are silently
+        omitted so the API works even with partial training.
     """
-    out: dict[str, ts.MineralModelBundle] = {}
+    if kind not in {"auto", "point", "quantile"}:
+        raise ValueError(f"kind must be one of auto/point/quantile, got {kind}")
+    out: dict[str, Bundle] = {}
     models_dir = Path(models_dir)
-    for path in sorted(models_dir.glob("*_scalar.pkl")):
-        with path.open("rb") as f:
-            bundle = pickle.load(f)
-        out[bundle.mineral] = bundle
+    if kind in {"auto", "point"}:
+        for path in sorted(models_dir.glob("*_scalar.pkl")):
+            with path.open("rb") as f:
+                bundle = pickle.load(f)
+            out[bundle.mineral] = bundle
+    if kind in {"auto", "quantile"}:
+        # Loaded second so quantile bundles override scalar ones under
+        # ``kind="auto"``.
+        for path in sorted(models_dir.glob("*_quantile.pkl")):
+            with path.open("rb") as f:
+                bundle = pickle.load(f)
+            out[bundle.mineral] = bundle
     return out
 
 
 def predict(
     scenario: dict,
-    models: dict[str, ts.MineralModelBundle],
+    models: dict[str, Bundle],
     n_steps: int = ft.DEFAULT_N_STEPS,
 ) -> dict[str, Any]:
-    """Predict scalar targets for ``scenario`` using the loaded models.
+    """Predict targets for ``scenario`` using the appropriate bundle.
 
-    Args:
-        scenario: scenario dict (same schema ``run_simulation.py`` accepts).
-        models: dict from ``load_models``.
-        n_steps: simulation horizon (must match training).
+    Dispatch is by bundle type:
 
-    Returns:
-        For Phase-1 single-seed bundles, one float per target (the
-        bundle's mean prediction) plus a ``_warnings`` list.
+    * :class:`train_scalar.MineralModelBundle` with ``ensemble=False``
+      -> ``<target>: float``  (Phase-1 layout).
+    * :class:`train_scalar.MineralModelBundle` with ``ensemble=True``
+      -> ``<target>_mean: float`` and ``<target>_std: float``.
+    * :class:`quantile.MineralQuantileBundle`
+      -> ``<target>_lo / _med / _hi: float`` (conformal-corrected).
 
-        For Phase-2 ensemble bundles, two floats per target -- the
-        predicted ensemble mean and the predicted seed-to-seed std --
-        suffixed ``"_mean"`` / ``"_std"``. Where the std-prediction
-        booster wasn't trained (e.g. recovery_time_if_recovered when
-        too few rows had a finite mean), the std field is NaN. The
-        ``recovered_mean`` field is interpretable as the predicted
-        probability that the price returns to within +/-5% of the
-        pre-event baseline before the run ends.
-
-    Raises ``KeyError`` if ``scenario['mineral']`` has no trained
-    model in ``models``.
+    Raises ``KeyError`` if ``scenario['mineral']`` has no trained model
+    in ``models``.
     """
     mineral = scenario.get("mineral")
     if mineral not in models:
@@ -88,6 +117,9 @@ def predict(
             f"(available: {list(models)})"
         )
     bundle = models[mineral]
+
+    if isinstance(bundle, qt.MineralQuantileBundle):
+        return qt.predict_quantile(bundle, scenario, n_steps=n_steps)
 
     expected_features = ft.feature_names(mineral)
     if expected_features != bundle.feature_names:
@@ -127,7 +159,7 @@ def predict(
 
 def predict_batch(
     scenarios: list[dict],
-    models: dict[str, ts.MineralModelBundle],
+    models: dict[str, Bundle],
     n_steps: int = ft.DEFAULT_N_STEPS,
 ) -> list[dict[str, Any]]:
     """Predict for a list of scenarios; per-element output mirrors ``predict``."""
