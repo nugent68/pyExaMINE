@@ -1,18 +1,21 @@
 #!/bin/bash
 # pyExaMINE -- generate surrogate-training data on Perlmutter, scratch I/O.
 #
-# Variant of perlmutter_sample.slurm sized for 6 nodes / 2 hr / regular
+# Variant of perlmutter_sample.slurm sized for 6 nodes / 3 hr / regular
 # QoS, writing to /pscratch (Lustre, ~10x lower latency for the 120k
 # small CSV writes than CFS GPFS). Same stride-distributed dispatch as
 # perlmutter_sample.slurm; only the path and shape change.
 #
-# Why 6 nodes x 2 hr instead of 4 x 3 hr (the original):
-#   - Same node-hours (12) at less wall-clock and finishes inside one
-#     allocation. Avoids the platinum tail spilling past the cap.
-#   - 6 nodes x 128 = 768 parallel slots; at ~70s/task on the slow
-#     mineral that's 40000 / 768 * 70s ~= 1 h per mineral, 3 minerals
-#     => ~3 h serial worst case. With Li/Ni faster than Pt, ~1 h 50 min
-#     is the realistic landing zone -- comfortable inside 2 h.
+# Why 6 nodes x 3 hr:
+#   - 6 nodes x 128 = 768 parallel slots; observed ~45 min for Li/Ni
+#     and ~75 min for Pt against scratch I/O => ~2 h 45 min nominal.
+#     3 h gives ~15 min margin for tail variance, so the run finishes
+#     inside one allocation without needing a follow-on gap-fill.
+#   - Earlier 6 nodes x 2 hr submission (52565221) ran out at 28k/40k
+#     platinum done; the 1 hr extra here just buys a clean finish.
+#   - Total cost: 18 node-h vs the 4-node x 3-hr original (12) but the
+#     wall-clock is no shorter than the original. Trade-off bought to
+#     avoid the gap-fill follow-up dance.
 #
 # Pre-flight (once per dataset version, on a login node):
 #   mkdir -p /pscratch/sd/n/nugent/pyExaMINE/surrogate_data
@@ -34,7 +37,7 @@
 #SBATCH --ntasks=6
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=128
-#SBATCH --time=02:00:00
+#SBATCH --time=03:00:00
 #SBATCH --job-name=pyexamine_sample_scratch
 #SBATCH --output=logs/sample_scratch_%j.log
 
