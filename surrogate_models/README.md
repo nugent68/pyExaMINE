@@ -72,17 +72,17 @@ unique scenarios per mineral.
 
 | Target | Li | Ni | Pt |
 |---|---:|---:|---:|
-| mean_price_in_window | 0.947 | 0.938 | 0.875 |
-| peak_price | 0.960 | 0.952 | 0.920 |
-| unfulfilled_fraction | 0.867 | 0.741 | 0.874 |
-| recovered (probability) | 0.817 | 0.774 | 0.635 |
-| recovery_time_if_recovered | 0.201 | 0.461 | 0.433 |
+| mean_price_in_window | 0.947 | 0.938 | 0.900 |
+| peak_price | 0.960 | 0.952 | 0.906 |
+| unfulfilled_fraction | 0.867 | 0.741 | 0.920 |
+| recovered (probability) | 0.817 | 0.774 | 0.696 |
+| recovery_time_if_recovered | 0.201 | 0.461 | 0.382 |
 
 Mean MAPEs on the price targets sit at 2&ndash;6%.
 
 ### CQR bundles &mdash; conformal coverage at &alpha; = 0.10
 
-Target = 90% interval coverage. Mean conformal coverage = **89.7%**;
+Target = 90% interval coverage. Mean conformal coverage = **90.2%**;
 mean width-to-y-range = **0.41**.
 
 See the `*_quantile.metrics.json` side-cars for the full
