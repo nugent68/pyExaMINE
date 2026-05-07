@@ -28,7 +28,7 @@
 #   BATCH_SIZE    1024
 #   OUT_SUBDIR    trajectory_models   under DATA_ROOT
 #
-#SBATCH --image=docker:nugent68/pyexamine:4ceaea4
+#SBATCH --image=docker:nugent68/pyexamine:5df34dc
 #SBATCH --account=amsc001
 #SBATCH --constraint=gpu
 #SBATCH --qos=debug
@@ -50,6 +50,7 @@ set -euo pipefail
 : "${LR:=1e-3}"
 : "${OUT_SUBDIR:=trajectory_models}"
 : "${MINERALS:=lithium nickel platinum}"
+: "${ARCH:=deeponet}"             # deeponet | deeponet_phase
 
 mkdir -p logs "${DATA_ROOT}/${OUT_SUBDIR}"
 
@@ -82,6 +83,7 @@ for MINERAL in $MINERALS; do
          shifter --module=gpu --volume="${DATA_ROOT}:/data" \
          bash -c "cd /app && /app/.venv/bin/python scripts/train_trajectory.py \
              ${DATA_FLAGS} \
+             --arch ${ARCH} \
              --out /data/${OUT_SUBDIR} \
              --mineral ${MINERAL} \
              --epochs ${EPOCHS} \
