@@ -1,29 +1,25 @@
 #!/bin/bash
 # pyExaMINE -- v3 hybrid architecture sweep on Perlmutter CPU nodes.
 #
-# Why CPU and not GPU: GBT-class small models (~80k-200k params) hit
-# diminishing returns from a GPU's parallelism past ~10 ms per batch.
-# Per single-run wall, one A100 only beats one Milan CPU node by 2-3x.
-# But for *parallel-experiment throughput* the math flips -- 8 CPU
-# nodes can host 24 independent training runs simultaneously, vs the
-# 4-A100 GPU node's 4.  At NERSC's allocation ratio (1 GPU node-hour ~
-# 8 CPU node-hours) the budgets match, so the choice is whether you
-# want one fast experiment or many parallel ones.  This script is for
-# many.
+# Why CPU and not GPU: small models (~80k-200k params) hit diminishing
+# returns from a GPU's parallelism past ~10 ms per batch.  Per single-
+# run wall, one A100 only beats one Milan CPU node by 2-3x.  But for
+# *parallel-experiment throughput* the math flips -- 8 CPU nodes can
+# host 24 independent training runs simultaneously, vs the 4-A100 GPU
+# node's 4.  At NERSC's allocation ratio (1 GPU node-h ~ 8 CPU node-h)
+# the budgets match, so the choice is whether you want one fast
+# experiment or many parallel ones.  This script is for many.
 #
 # What gets swept:
 #   3 minerals (Li, Ni, Pt) x N variants (one per HYBRID_VARIANTS entry
-#   in src/trajectory/hybrid.py).  At MAX_PER_NODE=3 concurrent
-#   trainings per node (with OMP_NUM_THREADS = 128/3 ~= 42 each),
-#   8 nodes hold up to 24 simultaneous runs, finishing in roughly the
-#   wall time of one (mineral, variant) pair.
+#   in src/trajectory/hybrid.py) = 24 runs at the default knob set.
+#   8 nodes x 3 tasks per node = 24 simultaneous runs, each with 42
+#   cores via OMP_NUM_THREADS.
 #
 # Per-run wall on a single CPU node, hybrid 50 epochs (rough):
 #   * ~2-3 min/epoch threaded across 42 cores
 #   * 50 epochs * 2.5 min = ~2 hours
-# So 1 hr is a debugging cap; the real ask is 2-3 hrs.
-#
-# Default ask: 8 nodes / 2.5 hr / regular_milan_ss11 / single submission.
+# 2.5 hr ask leaves ~30 min margin.
 #
 #SBATCH --image=docker:nugent68/pyexamine:175f086
 #SBATCH --account=amsc001
@@ -54,8 +50,9 @@ set -euo pipefail
 
 mkdir -p logs "${DATA_ROOT}/${OUT_SUBDIR}"
 
-# Build the run list: one (mineral, variant) per cell.  Total runs =
-# |MINERALS| x |VARIANTS|.
+# Build the run list as a flat array of "mineral:variant" pairs.
+# Order matters: srun assigns SLURM_PROCID 0..N-1 to tasks, so the
+# wrapper indexes RUN_LIST[SLURM_PROCID] to know what to train.
 RUN_LIST=()
 for V in $VARIANTS; do
     for M in $MINERALS; do
@@ -74,35 +71,46 @@ echo "Variants:      $VARIANTS"
 echo "Started:       $(date)"
 echo
 
-# The whole sweep dispatches as one srun with N_RUNS tasks.  We rely
-# on Slurm + srun --multi-prog to launch one shifter per task with
-# the right (mineral, variant) pair.  Build a multi-prog file on the
-# fly.
+# Wrapper script: each SLURM_PROCID picks its (mineral, variant) and
+# runs one shifter -> python.  Avoids srun --multi-prog's brittle
+# tokeniser; one bash file, one srun, clean quoting.
+WRAPPER="logs/traj_sweep_${SLURM_JOB_ID}_runner.sh"
+cat > "$WRAPPER" <<WRAPPER_EOF
+#!/bin/bash
+set -euo pipefail
+RUN_LIST=(${RUN_LIST[@]})
+pair="\${RUN_LIST[\$SLURM_PROCID]}"
+mineral="\${pair%%:*}"
+variant="\${pair##*:}"
+out_subdir="${OUT_SUBDIR}/\${mineral}_\${variant}"
+log="logs/traj_sweep_${SLURM_JOB_ID}_\${mineral}_\${variant}.log"
+echo "[\$(date +%T)] task \$SLURM_PROCID on \$(hostname): \${mineral} / \${variant}" | tee "\$log"
+shifter --volume="${DATA_ROOT}:/data" \\
+    bash -c "cd /app && OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK} MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK} /app/.venv/bin/python scripts/train_trajectory.py \\
+        --sweep-runs /data/surrogate_data/runs \\
+        --sweep-scenarios /data/surrogate_data/scenarios \\
+        --arch hybrid \\
+        --hybrid-variant \${variant} \\
+        --mineral \${mineral} \\
+        --out /data/\${out_subdir} \\
+        --epochs ${EPOCHS} \\
+        --subsample ${SUBSAMPLE} \\
+        --batch-size ${BATCH_SIZE} \\
+        --lr ${LR} \\
+        --device cpu \\
+        --num-workers 0 \\
+        --cache-dir /data/trajectory_cache" 2>&1 | tee -a "\$log"
+WRAPPER_EOF
+chmod +x "$WRAPPER"
 
-MULTI_PROG="logs/traj_sweep_${SLURM_JOB_ID}_multi_prog.txt"
-: > "$MULTI_PROG"
-for i in "${!RUN_LIST[@]}"; do
-    pair="${RUN_LIST[$i]}"
-    mineral="${pair%%:*}"
-    variant="${pair##*:}"
-    out_subdir="${OUT_SUBDIR}/${mineral}_${variant}"
-    # Multi-prog format: "<task_id> <executable> <args...>".  We
-    # invoke shifter directly; bash -c lets us assemble the python
-    # command line cleanly.
-    cat >> "$MULTI_PROG" <<EOF
-${i} bash -c "shifter --volume=${DATA_ROOT}:/data bash -c 'cd /app && OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK} MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK} /app/.venv/bin/python scripts/train_trajectory.py --sweep-runs /data/surrogate_data/runs --sweep-scenarios /data/surrogate_data/scenarios --arch hybrid --hybrid-variant ${variant} --mineral ${mineral} --out /data/${out_subdir} --epochs ${EPOCHS} --subsample ${SUBSAMPLE} --batch-size ${BATCH_SIZE} --lr ${LR} --device cpu --num-workers 0 --cache-dir /data/trajectory_cache 2>&1 | tee logs/traj_sweep_${SLURM_JOB_ID}_${mineral}_${variant}.log'"
-EOF
-done
-
-echo "=== multi-prog file: $MULTI_PROG ==="
-head -3 "$MULTI_PROG"
-echo "(... ${N_RUNS} total entries)"
+echo "=== wrapper written: $WRAPPER ==="
+head -8 "$WRAPPER"
 echo
 
-# Single srun with --multi-prog dispatches all tasks; Slurm assigns
-# them across the 8 nodes 3-per-node automatically.
+# Single srun fans out N_RUNS tasks across the allocation; each task
+# runs the wrapper, which inspects SLURM_PROCID to dispatch.
 srun --ntasks="${N_RUNS}" --cpus-per-task="${SLURM_CPUS_PER_TASK}" \
-     --multi-prog "$MULTI_PROG"
+     bash "$WRAPPER"
 
 echo
 echo "Finished: $(date)"
