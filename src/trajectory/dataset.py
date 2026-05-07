@@ -164,6 +164,7 @@ class TrajectoryDataset(Dataset):
         seed: int = 0,
         cache_dir: Path | None = None,
         verbose: bool = True,
+        with_phase: bool = False,
     ) -> None:
         if not records:
             raise ValueError("TrajectoryDataset got zero records")
@@ -173,6 +174,7 @@ class TrajectoryDataset(Dataset):
         self.subsample = int(subsample)
         self._rng = np.random.default_rng(seed)
         self._verbose = verbose
+        self.with_phase = bool(with_phase)
 
         # Eagerly encode all scenario features (fast: ~ms per record).
         feats = np.stack([
@@ -188,6 +190,24 @@ class TrajectoryDataset(Dataset):
 
         # Pre-pick the per-record subsample of timesteps.
         self._sampled_steps: torch.Tensor = self._pick_subsamples()
+
+        # Per-record event tensors for the phase variant.  Shape
+        # (N_records, MAX_EVENT_SLOTS) each; only built when needed.
+        if self.with_phase:
+            from .deeponet import (                # local import to avoid
+                MAX_EVENT_SLOTS,                    # circular at module load
+                scenario_event_tensors,
+            )
+            ev_s = torch.zeros((len(self.records), MAX_EVENT_SLOTS),
+                               dtype=torch.float32)
+            ev_e = torch.zeros_like(ev_s)
+            ev_a = torch.zeros_like(ev_s, dtype=torch.bool)
+            for i, r in enumerate(self.records):
+                s, e, a = scenario_event_tensors(r.scenario, self.n_steps)
+                ev_s[i] = s; ev_e[i] = e; ev_a[i] = a
+            self._event_starts: torch.Tensor = ev_s
+            self._event_ends: torch.Tensor = ev_e
+            self._event_active: torch.Tensor = ev_a
 
     # ----- public API -----
 
@@ -218,9 +238,25 @@ class TrajectoryDataset(Dataset):
         steps_per = self.subsample if self.subsample > 0 else self.n_steps
         rec_idx, in_rec = divmod(idx, steps_per)
         step = int(self._sampled_steps[rec_idx, in_rec])
+        t_norm = torch.tensor(step / max(1, self.n_steps - 1), dtype=torch.float32)
+        if not self.with_phase:
+            return (
+                self._features[rec_idx],
+                t_norm,
+                self._values[rec_idx, step],
+            )
+        # Phase variant: also return the (3,) event-phase features.
+        from .deeponet import compute_phase_features
+        phase = compute_phase_features(
+            t_norm.unsqueeze(0),
+            self._event_starts[rec_idx].unsqueeze(0),
+            self._event_ends[rec_idx].unsqueeze(0),
+            self._event_active[rec_idx].unsqueeze(0),
+        ).squeeze(0)
         return (
             self._features[rec_idx],
-            torch.tensor(step / max(1, self.n_steps - 1), dtype=torch.float32),
+            t_norm,
+            phase,
             self._values[rec_idx, step],
         )
 

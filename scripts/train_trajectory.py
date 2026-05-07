@@ -71,6 +71,10 @@ def _parse_args() -> argparse.Namespace:
                      help="Per-step CSV column to predict.")
 
     arch = p.add_argument_group("model")
+    arch.add_argument("--arch", choices=[dn.ARCH_DEEPONET, dn.ARCH_DEEPONET_PHASE],
+                      default=dn.ARCH_DEEPONET,
+                      help="Model variant. deeponet_phase augments the trunk "
+                           "with scenario-derived event-phase features.")
     arch.add_argument("--basis-dim", type=int, default=64)
     arch.add_argument("--branch-hidden", type=int, nargs="+",
                       default=[256, 256])
@@ -141,21 +145,22 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
               f"using all records for train/val/test")
         train_recs = val_recs = test_recs = records
 
+    with_phase = (args.arch == dn.ARCH_DEEPONET_PHASE)
     train_ds = td.TrajectoryDataset(
         train_recs, target_column=args.target_column,
         subsample=args.subsample, seed=args.seed,
-        cache_dir=args.cache_dir,
+        cache_dir=args.cache_dir, with_phase=with_phase,
     )
     val_ds = td.TrajectoryDataset(
         val_recs, target_column=args.target_column,
         subsample=max(args.subsample, 200), seed=args.seed + 1,
-        cache_dir=args.cache_dir,
+        cache_dir=args.cache_dir, with_phase=with_phase,
     )
     test_ds = td.TrajectoryDataset(
         test_recs, target_column=args.target_column,
         subsample=0,    # full trajectory at test time
         seed=args.seed + 2,
-        cache_dir=args.cache_dir,
+        cache_dir=args.cache_dir, with_phase=with_phase,
     )
     feat_dim = train_ds.feature_dim()
 
@@ -183,6 +188,7 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
         target_log_mean=target_mean,
         target_log_std=target_std,
         seed=args.seed,
+        arch=args.arch,
     )
 
     model = bundle.build_model().to(device)
@@ -205,6 +211,17 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     print(f"  device={device} log_target={log_target} "
           f"target_log_mean={target_mean:.3f} std={target_std:.3f}")
 
+    def _forward(batch):
+        """Dispatch by tuple length: phase variants return 4-tuples."""
+        if len(batch) == 4:
+            feats, tnorm, phase, y = batch
+            feats = feats.to(device); tnorm = tnorm.to(device)
+            phase = phase.to(device); y = y.to(device)
+            return y, model(feats, tnorm, phase)
+        feats, tnorm, y = batch
+        feats = feats.to(device); tnorm = tnorm.to(device); y = y.to(device)
+        return y, model(feats, tnorm)
+
     best_val = float("inf")
     best_state: dict[str, torch.Tensor] | None = None
     last_train_loss = float("nan")
@@ -218,10 +235,9 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
 
         model.train()
         train_losses: list[float] = []
-        for feats, tnorm, y in train_loader:
-            feats = feats.to(device); tnorm = tnorm.to(device); y = y.to(device)
+        for batch in train_loader:
+            y, y_hat_n = _forward(batch)
             y_n = bundle.normalise(y)
-            y_hat_n = model(feats, tnorm)
             loss = loss_fn(y_hat_n, y_n)
             opt.zero_grad()
             loss.backward()
@@ -234,10 +250,9 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
         model.eval()
         with torch.no_grad():
             val_losses: list[float] = []
-            for feats, tnorm, y in val_loader:
-                feats = feats.to(device); tnorm = tnorm.to(device); y = y.to(device)
+            for batch in val_loader:
+                y, y_hat_n = _forward(batch)
                 y_n = bundle.normalise(y)
-                y_hat_n = model(feats, tnorm)
                 val_losses.append(float(loss_fn(y_hat_n, y_n)))
             val_loss = float(np.mean(val_losses)) if val_losses else float("nan")
 
@@ -259,10 +274,9 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     test_loader = DataLoader(test_ds, **val_loader_kwargs)
     sq_errs, abs_errs, abs_y, sq_norm = [], [], [], []
     with torch.no_grad():
-        for feats, tnorm, y in test_loader:
-            feats = feats.to(device); tnorm = tnorm.to(device); y = y.to(device)
+        for batch in test_loader:
+            y, y_hat_n = _forward(batch)
             y_n = bundle.normalise(y)
-            y_hat_n = model(feats, tnorm)
             sq_norm.append(float(torch.mean((y_hat_n - y_n) ** 2)))
             y_hat = bundle.denormalise(y_hat_n)
             sq_errs.append(((y_hat - y) ** 2).cpu().numpy())
@@ -298,6 +312,7 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     side_car = out_path.with_suffix(".metrics.json")
     payload = {
         "mineral": mineral,
+        "arch": args.arch,
         "feature_dim": feat_dim,
         "basis_dim": args.basis_dim,
         "branch_hidden": list(args.branch_hidden),

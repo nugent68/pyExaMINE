@@ -45,3 +45,11 @@ datasets_perlmutter/
 # CFS / Lustre.
 trajectory_models/*.pkl
 trajectory_models_smoke/
+
+# Local cache of GBT/CSV/scenarios pulled from CFS / scratch for
+# eval scripts. Regenerable; canonical copies live on NERSC.
+local_eval_data/
+
+# Per-record trajectory tensor caches (.pt) materialised by the
+# TrajectoryDataset.  Regenerable from the per-mineral runs on CFS.
+trajectory_cache/
