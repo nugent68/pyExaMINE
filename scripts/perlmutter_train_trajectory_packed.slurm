@@ -28,7 +28,7 @@
 #   BATCH_SIZE    1024
 #   OUT_SUBDIR    trajectory_models   under DATA_ROOT
 #
-#SBATCH --image=docker:nugent68/pyexamine:e56166b
+#SBATCH --image=docker:nugent68/pyexamine:4ceaea4
 #SBATCH --account=amsc001
 #SBATCH --constraint=gpu
 #SBATCH --qos=debug
