@@ -252,3 +252,45 @@ def default_hybrid_config(mineral: str) -> dict:
         event_time_embed_dim=32,
         impulse_hidden=[128, 128],
     )
+
+
+#: Named architecture variants for the v3 hybrid sweep.  Each variant
+#: returns ``default_hybrid_config(mineral)`` overlaid with the listed
+#: deltas, so adding a new variant only needs the diff.  The registry
+#: is consumed by ``--hybrid-variant`` in ``scripts/train_trajectory.py``
+#: and the ``scripts/perlmutter_sweep_trajectory_cpu.slurm`` fan-out.
+HYBRID_VARIANTS: dict[str, dict] = {
+    # Baseline (matches default_hybrid_config exactly).
+    "default": {},
+
+    # ----- impulse-MLP capacity dial -----
+    "impulse_256x2": dict(impulse_hidden=[256, 256]),
+    "impulse_512x2": dict(impulse_hidden=[512, 512]),
+    "impulse_256x3": dict(impulse_hidden=[256, 256, 256]),
+
+    # ----- event-embedding capacity -----
+    "embed_32":      dict(event_embed_dim=32),
+    "embed_64":      dict(event_embed_dim=64),
+
+    # ----- baseline DeepONet capacity -----
+    "baseline_basis_128": dict(baseline_basis_dim=128),
+
+    # ----- everything bigger -----
+    "all_larger": dict(
+        impulse_hidden=[256, 256],
+        event_embed_dim=32,
+        baseline_basis_dim=128,
+    ),
+}
+
+
+def hybrid_config_for_variant(mineral: str, variant: str) -> dict:
+    """Return the resolved hyperparam dict for ``--hybrid-variant``."""
+    if variant not in HYBRID_VARIANTS:
+        raise ValueError(
+            f"Unknown hybrid variant '{variant}'. "
+            f"Known: {sorted(HYBRID_VARIANTS)}"
+        )
+    cfg = default_hybrid_config(mineral)
+    cfg.update(HYBRID_VARIANTS[variant])
+    return cfg

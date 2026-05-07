@@ -33,8 +33,11 @@ name to predict something else.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +50,28 @@ from torch.utils.data import Dataset
 
 from src.surrogate import features as ft
 from .scenarios import CANONICAL_2050
+
+
+@contextlib.contextmanager
+def _file_lock(lock_path: Path):
+    """Advisory ``flock`` over ``lock_path`` for cooperative cache builds.
+
+    Multiple processes running training on the same record set will
+    race to build the trajectory tensor cache; this lock serialises
+    the build so only one process pays the CSV-read cost and the
+    others reload the finished ``.pt``.  Lock is released when the
+    context exits.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 #: Default per-step CSV column predicted by the v1 trajectory surrogate.
@@ -321,22 +346,55 @@ class TrajectoryDataset(Dataset):
 
     def _load_or_build_values(self, cache_dir: Path | None) -> torch.Tensor:
         cache_path = self._cache_path(cache_dir)
-        if cache_path is not None and cache_path.is_file():
+
+        def _try_load() -> torch.Tensor | None:
+            if cache_path is None or not cache_path.is_file():
+                return None
             t0 = time.time()
-            values = torch.load(cache_path, weights_only=True)
+            try:
+                values = torch.load(cache_path, weights_only=True)
+            except Exception:                       # pickle, EOF, etc.
+                return None
             if values.shape != (len(self.records), self.n_steps):
-                # Corrupt or mismatched -- fall through to rebuild.
                 if self._verbose:
                     print(f"[trajectory] cache shape mismatch at "
-                          f"{cache_path}; rebuilding")
-            else:
+                          f"{cache_path}; will rebuild")
+                return None
+            if self._verbose:
+                print(f"[trajectory] loaded cache "
+                      f"({values.shape[0]} records, "
+                      f"{values.shape[1]} steps) "
+                      f"in {time.time() - t0:.1f}s")
+            return values
+
+        # Fast path: cache is ready, no lock needed.
+        loaded = _try_load()
+        if loaded is not None:
+            return loaded
+
+        # Slow path: take a per-cache-file flock so only one of N
+        # concurrent training runs actually builds the .pt; the
+        # others wait, see the file appear, and load it on second try.
+        if cache_path is not None:
+            lock_path = cache_path.with_suffix(cache_path.suffix + ".lock")
+            with _file_lock(lock_path):
+                # Another process may have built the cache while we
+                # were blocked -- retry the load before doing work.
+                loaded = _try_load()
+                if loaded is not None:
+                    return loaded
+                values = self._build_values_from_csvs()
+                tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+                torch.save(values, tmp_path)
+                tmp_path.replace(cache_path)        # atomic on POSIX
                 if self._verbose:
-                    print(f"[trajectory] loaded cache "
-                          f"({values.shape[0]} records, "
-                          f"{values.shape[1]} steps) "
-                          f"in {time.time() - t0:.1f}s")
+                    print(f"[trajectory] saved cache to {cache_path}")
                 return values
 
+        # No cache_dir: build in-memory and don't persist.
+        return self._build_values_from_csvs()
+
+    def _build_values_from_csvs(self) -> torch.Tensor:
         N, T = len(self.records), self.n_steps
         if self._verbose:
             print(f"[trajectory] building values cache: "
@@ -351,7 +409,6 @@ class TrajectoryDataset(Dataset):
             values[i, :n] = torch.from_numpy(arr[:n])
             if n < T:
                 # Pad short trajectories with the last observed value.
-                # Should be rare -- run_one_scenario.py writes T rows.
                 values[i, n:] = arr[-1]
             if self._verbose and (i + 1) % 5000 == 0:
                 rate = (i + 1) / (time.time() - t0)
@@ -362,12 +419,6 @@ class TrajectoryDataset(Dataset):
         if self._verbose:
             print(f"[trajectory] values cache built in {elapsed:.1f}s "
                   f"({N / elapsed:.0f} CSVs/s)")
-
-        if cache_path is not None:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(values, cache_path)
-            if self._verbose:
-                print(f"[trajectory] saved cache to {cache_path}")
         return values
 
     def _pick_subsamples(self) -> torch.Tensor:

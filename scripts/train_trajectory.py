@@ -85,6 +85,10 @@ def _parse_args() -> argparse.Namespace:
     arch.add_argument("--trunk-hidden",  type=int, nargs="+",
                       default=[128, 128])
     arch.add_argument("--time-embed-dim", type=int, default=64)
+    arch.add_argument("--hybrid-variant", default="default",
+                      help="Named hyperparam variant for --arch hybrid; one "
+                           "of the keys in src.trajectory.hybrid.HYBRID_VARIANTS. "
+                           "Used by the architecture-sweep slurm script.")
     arch.add_argument("--no-log-target", action="store_true",
                       help="Train on raw target instead of log-target.")
 
@@ -186,7 +190,7 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     hybrid_config: dict = {}
     if with_hybrid:
         from src.trajectory import hybrid as hb     # local import
-        hybrid_config = hb.default_hybrid_config(mineral)
+        hybrid_config = hb.hybrid_config_for_variant(mineral, args.hybrid_variant)
     bundle = dn.MineralTrajectoryBundle(
         mineral=mineral,
         feature_dim=feat_dim,
@@ -336,6 +340,8 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     payload = {
         "mineral": mineral,
         "arch": args.arch,
+        "hybrid_variant": args.hybrid_variant if with_hybrid else None,
+        "hybrid_config": hybrid_config if with_hybrid else None,
         "feature_dim": feat_dim,
         "basis_dim": args.basis_dim,
         "branch_hidden": list(args.branch_hidden),
