@@ -1,0 +1,28 @@
+{
+  "mineral": "nickel",
+  "feature_dim": 105,
+  "basis_dim": 64,
+  "branch_hidden": [
+    256,
+    256
+  ],
+  "trunk_hidden": [
+    128,
+    128
+  ],
+  "time_embed_dim": 64,
+  "target_column": "Global_Price",
+  "n_steps": 1352,
+  "log_target": true,
+  "metrics": {
+    "n_train_csvs": 32000,
+    "n_val_csvs": 4000,
+    "n_test_csvs": 4000,
+    "train_loss": 0.06674583690881729,
+    "val_loss": 0.08178998330248344,
+    "test_loss": 0.08495973782961753,
+    "test_rmse": 1583.5106201171875,
+    "test_mae": 972.9140014648438,
+    "test_relative_rmse": 0.1330541758155104
+  }
+}

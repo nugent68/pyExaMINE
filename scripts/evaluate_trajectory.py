@@ -168,9 +168,13 @@ def _evaluate_mineral(
 
     # Predict trajectories.  Encode all features once, then call the
     # vectorised helper which evaluates the full horizon in one shot.
+    # Phase bundles also need the per-scenario event timeline.
     X = np.stack([ft.encode(s, n_steps=bundle.n_steps).astype(np.float32)
                   for s in scenarios])
-    preds = dn.predict_trajectory(bundle, X, device=device)   # (B, T)
+    preds = dn.predict_trajectory(
+        bundle, X, device=device,
+        scenarios=scenarios if bundle.is_phase() else None,
+    )                                                          # (B, T)
     preds_list = [preds[i] for i in range(preds.shape[0])]
 
     # GBT scalar predictions on the same scenarios (optional).

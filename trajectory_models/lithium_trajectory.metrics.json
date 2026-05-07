@@ -1,0 +1,28 @@
+{
+  "mineral": "lithium",
+  "feature_dim": 95,
+  "basis_dim": 64,
+  "branch_hidden": [
+    256,
+    256
+  ],
+  "trunk_hidden": [
+    128,
+    128
+  ],
+  "time_embed_dim": 64,
+  "target_column": "Global_Price",
+  "n_steps": 1352,
+  "log_target": true,
+  "metrics": {
+    "n_train_csvs": 32000,
+    "n_val_csvs": 4000,
+    "n_test_csvs": 4000,
+    "train_loss": 0.15666755795955659,
+    "val_loss": 0.1787383965147502,
+    "test_loss": 0.18051434799588706,
+    "test_rmse": 2492.96630859375,
+    "test_mae": 1812.1500244140625,
+    "test_relative_rmse": 0.1847191431246249
+  }
+}

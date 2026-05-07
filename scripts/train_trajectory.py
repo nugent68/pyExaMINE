@@ -71,10 +71,14 @@ def _parse_args() -> argparse.Namespace:
                      help="Per-step CSV column to predict.")
 
     arch = p.add_argument_group("model")
-    arch.add_argument("--arch", choices=[dn.ARCH_DEEPONET, dn.ARCH_DEEPONET_PHASE],
+    arch.add_argument("--arch", choices=[dn.ARCH_DEEPONET,
+                                          dn.ARCH_DEEPONET_PHASE,
+                                          dn.ARCH_HYBRID],
                       default=dn.ARCH_DEEPONET,
                       help="Model variant. deeponet_phase augments the trunk "
-                           "with scenario-derived event-phase features.")
+                           "with scenario-derived event-phase features. "
+                           "hybrid uses smooth-baseline + per-event impulse "
+                           "decomposition.")
     arch.add_argument("--basis-dim", type=int, default=64)
     arch.add_argument("--branch-hidden", type=int, nargs="+",
                       default=[256, 256])
@@ -146,21 +150,25 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
         train_recs = val_recs = test_recs = records
 
     with_phase = (args.arch == dn.ARCH_DEEPONET_PHASE)
+    with_hybrid = (args.arch == dn.ARCH_HYBRID)
     train_ds = td.TrajectoryDataset(
         train_recs, target_column=args.target_column,
         subsample=args.subsample, seed=args.seed,
-        cache_dir=args.cache_dir, with_phase=with_phase,
+        cache_dir=args.cache_dir,
+        with_phase=with_phase, with_hybrid=with_hybrid,
     )
     val_ds = td.TrajectoryDataset(
         val_recs, target_column=args.target_column,
         subsample=max(args.subsample, 200), seed=args.seed + 1,
-        cache_dir=args.cache_dir, with_phase=with_phase,
+        cache_dir=args.cache_dir,
+        with_phase=with_phase, with_hybrid=with_hybrid,
     )
     test_ds = td.TrajectoryDataset(
         test_recs, target_column=args.target_column,
         subsample=0,    # full trajectory at test time
         seed=args.seed + 2,
-        cache_dir=args.cache_dir, with_phase=with_phase,
+        cache_dir=args.cache_dir,
+        with_phase=with_phase, with_hybrid=with_hybrid,
     )
     feat_dim = train_ds.feature_dim()
 
@@ -175,6 +183,10 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     target_mean = float(sample.mean())
     target_std = float(sample.std()) or 1.0
 
+    hybrid_config: dict = {}
+    if with_hybrid:
+        from src.trajectory import hybrid as hb     # local import
+        hybrid_config = hb.default_hybrid_config(mineral)
     bundle = dn.MineralTrajectoryBundle(
         mineral=mineral,
         feature_dim=feat_dim,
@@ -189,6 +201,7 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
         target_log_std=target_std,
         seed=args.seed,
         arch=args.arch,
+        hybrid_config=hybrid_config,
     )
 
     model = bundle.build_model().to(device)
@@ -212,7 +225,17 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
           f"target_log_mean={target_mean:.3f} std={target_std:.3f}")
 
     def _forward(batch):
-        """Dispatch by tuple length: phase variants return 4-tuples."""
+        """Dispatch by tuple length:
+            3-tuple = deeponet (features, t, y)
+            4-tuple = deeponet_phase (features, t, phase, y)
+            7-tuple = hybrid (knobs, t, ev_id, ev_st, ev_du, ev_ac, y)
+        """
+        if len(batch) == 7:
+            kn, tnorm, ev_id, ev_st, ev_du, ev_ac, y = batch
+            kn = kn.to(device); tnorm = tnorm.to(device); y = y.to(device)
+            ev_id = ev_id.to(device); ev_st = ev_st.to(device)
+            ev_du = ev_du.to(device); ev_ac = ev_ac.to(device)
+            return y, model(kn, tnorm, ev_id, ev_st, ev_du, ev_ac)
         if len(batch) == 4:
             feats, tnorm, phase, y = batch
             feats = feats.to(device); tnorm = tnorm.to(device)

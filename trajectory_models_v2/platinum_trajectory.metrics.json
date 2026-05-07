@@ -1,0 +1,29 @@
+{
+  "mineral": "platinum",
+  "arch": "deeponet_phase",
+  "feature_dim": 75,
+  "basis_dim": 64,
+  "branch_hidden": [
+    256,
+    256
+  ],
+  "trunk_hidden": [
+    128,
+    128
+  ],
+  "time_embed_dim": 64,
+  "target_column": "Global_Price",
+  "n_steps": 1352,
+  "log_target": true,
+  "metrics": {
+    "n_train_csvs": 32000,
+    "n_val_csvs": 4000,
+    "n_test_csvs": 4000,
+    "train_loss": 0.18367634535074234,
+    "val_loss": 0.219486566403371,
+    "test_loss": 0.20633709212683637,
+    "test_rmse": 1848787.875,
+    "test_mae": 1189963.75,
+    "test_relative_rmse": 0.047483684054315446
+  }
+}

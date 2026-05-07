@@ -165,6 +165,7 @@ class TrajectoryDataset(Dataset):
         cache_dir: Path | None = None,
         verbose: bool = True,
         with_phase: bool = False,
+        with_hybrid: bool = False,
     ) -> None:
         if not records:
             raise ValueError("TrajectoryDataset got zero records")
@@ -175,6 +176,9 @@ class TrajectoryDataset(Dataset):
         self._rng = np.random.default_rng(seed)
         self._verbose = verbose
         self.with_phase = bool(with_phase)
+        self.with_hybrid = bool(with_hybrid)
+        if self.with_phase and self.with_hybrid:
+            raise ValueError("with_phase and with_hybrid are mutually exclusive")
 
         # Eagerly encode all scenario features (fast: ~ms per record).
         feats = np.stack([
@@ -209,6 +213,31 @@ class TrajectoryDataset(Dataset):
             self._event_ends: torch.Tensor = ev_e
             self._event_active: torch.Tensor = ev_a
 
+        # Per-record tensors for the hybrid variant: baseline knobs +
+        # per-event (id, start_norm, log_duration, active).
+        if self.with_hybrid:
+            from .hybrid import (
+                MAX_EVENTS, encode_baseline_knobs, encode_events,
+            )
+            mineral = self.records[0].mineral
+            kn_dim = encode_baseline_knobs(self.records[0].scenario).shape[0]
+            kn_t = torch.zeros((len(self.records), kn_dim), dtype=torch.float32)
+            ids_t = torch.zeros((len(self.records), MAX_EVENTS), dtype=torch.long)
+            st_t = torch.zeros_like(ids_t, dtype=torch.float32)
+            du_t = torch.zeros_like(st_t)
+            ac_t = torch.zeros_like(ids_t, dtype=torch.bool)
+            for i, r in enumerate(self.records):
+                kn_t[i] = encode_baseline_knobs(r.scenario)
+                ids, st, du, ac = encode_events(
+                    r.scenario, mineral, n_steps=self.n_steps,
+                )
+                ids_t[i] = ids; st_t[i] = st; du_t[i] = du; ac_t[i] = ac
+            self._knob_features: torch.Tensor = kn_t
+            self._event_ids: torch.Tensor = ids_t
+            self._event_starts_norm: torch.Tensor = st_t
+            self._event_log_durations: torch.Tensor = du_t
+            self._event_active_h: torch.Tensor = ac_t
+
     # ----- public API -----
 
     def feature_dim(self) -> int:
@@ -239,6 +268,17 @@ class TrajectoryDataset(Dataset):
         rec_idx, in_rec = divmod(idx, steps_per)
         step = int(self._sampled_steps[rec_idx, in_rec])
         t_norm = torch.tensor(step / max(1, self.n_steps - 1), dtype=torch.float32)
+        if self.with_hybrid:
+            # 6-tuple for HybridTrajectoryModel.forward.
+            return (
+                self._knob_features[rec_idx],
+                t_norm,
+                self._event_ids[rec_idx],
+                self._event_starts_norm[rec_idx],
+                self._event_log_durations[rec_idx],
+                self._event_active_h[rec_idx],
+                self._values[rec_idx, step],
+            )
         if not self.with_phase:
             return (
                 self._features[rec_idx],

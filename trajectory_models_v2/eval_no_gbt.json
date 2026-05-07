@@ -1,0 +1,390 @@
+{
+  "n_per_mineral_requested": 100,
+  "seed": 0,
+  "reports": [
+    {
+      "mineral": "lithium",
+      "n_scenarios": 100,
+      "avg_trajectory_rmse": 2311.830436741227,
+      "avg_trajectory_rel_rmse": 0.1694241007516088,
+      "derived_vs_true": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 100,
+          "rmse": 840.8338774574503,
+          "mae": 607.2741024260918,
+          "bias": -219.87998274043014,
+          "r2": 0.9622094068072158,
+          "rel_rmse": 0.06386180856192472
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 100,
+          "rmse": 4485.378501115403,
+          "mae": 3824.1538971255304,
+          "bias": -3700.6789654311874,
+          "r2": 0.5121228016996051,
+          "rel_rmse": 0.2412587613667599
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 100,
+          "rmse": 0.5477225575051661,
+          "mae": 0.3,
+          "bias": -0.28,
+          "r2": -0.9493177387914233,
+          "rel_rmse": 0.6762006882779827
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 52,
+          "rmse": 143.0418174467227,
+          "mae": 31.076923076923077,
+          "bias": 7.423076923076923,
+          "r2": -18.501995619964024,
+          "rel_rmse": 11.901079211567327
+        }
+      },
+      "derived_vs_gbt": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        }
+      },
+      "gbt_vs_true": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        }
+      },
+      "peak_alignment": {
+        "n_scenarios": 90,
+        "median_abs_err_steps": 23.0,
+        "p90_abs_err_steps": 103.20000000000019,
+        "mean_abs_err_steps": 48.888888888888886,
+        "within_5_frac": 0.1111111111111111,
+        "within_10_frac": 0.24444444444444444
+      }
+    },
+    {
+      "mineral": "nickel",
+      "n_scenarios": 100,
+      "avg_trajectory_rmse": 1375.2179574536206,
+      "avg_trajectory_rel_rmse": 0.10997369988346532,
+      "derived_vs_true": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 100,
+          "rmse": 678.6572433909362,
+          "mae": 464.967015090098,
+          "bias": -88.47419143539484,
+          "r2": 0.9555599412284057,
+          "rel_rmse": 0.06366726043579282
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 100,
+          "rmse": 3222.441864431447,
+          "mae": 2344.779218797312,
+          "bias": -2133.5117177760267,
+          "r2": 0.6232830694330791,
+          "rel_rmse": 0.2192501755953755
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 100,
+          "rmse": 0.3872983346207417,
+          "mae": 0.15,
+          "bias": -0.11,
+          "r2": 0.15302089215132697,
+          "rel_rmse": 0.5029848501568074
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 64,
+          "rmse": 130.95848578843604,
+          "mae": 61.34375,
+          "bias": 38.0,
+          "r2": 0.2856357363308677,
+          "rel_rmse": 1.7486632777925948
+        }
+      },
+      "derived_vs_gbt": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        }
+      },
+      "gbt_vs_true": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        }
+      },
+      "peak_alignment": {
+        "n_scenarios": 74,
+        "median_abs_err_steps": 26.0,
+        "p90_abs_err_steps": 127.0,
+        "mean_abs_err_steps": 53.13513513513514,
+        "within_5_frac": 0.21621621621621623,
+        "within_10_frac": 0.35135135135135137
+      }
+    },
+    {
+      "mineral": "platinum",
+      "n_scenarios": 100,
+      "avg_trajectory_rmse": 1724160.3875392992,
+      "avg_trajectory_rel_rmse": 0.04503459300058259,
+      "derived_vs_true": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 100,
+          "rmse": 1007460.3642845155,
+          "mae": 700570.9360212405,
+          "bias": -269297.04317208094,
+          "r2": 0.9252091779089008,
+          "rel_rmse": 0.02594172255950153
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 100,
+          "rmse": 3040405.0519901444,
+          "mae": 2242159.742122961,
+          "bias": -2119680.530117355,
+          "r2": 0.47457064797471304,
+          "rel_rmse": 0.07161507645475183
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 100,
+          "rmse": 0.5099019513592785,
+          "mae": 0.26,
+          "bias": -0.24,
+          "r2": -0.9345238095238089,
+          "rel_rmse": 0.6070261325705697
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 59,
+          "rmse": 28.082203786233112,
+          "mae": 9.322033898305085,
+          "bias": -9.322033898305085,
+          "r2": -0.12384080908782757,
+          "rel_rmse": 3.012454587977734
+        }
+      },
+      "derived_vs_gbt": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        }
+      },
+      "gbt_vs_true": {
+        "mean_price_in_window": {
+          "target": "mean_price_in_window",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "peak_price": {
+          "target": "peak_price",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovered": {
+          "target": "recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        },
+        "recovery_time_if_recovered": {
+          "target": "recovery_time_if_recovered",
+          "n": 0,
+          "rmse": NaN,
+          "mae": NaN,
+          "bias": NaN,
+          "r2": NaN,
+          "rel_rmse": NaN
+        }
+      },
+      "peak_alignment": {
+        "n_scenarios": 84,
+        "median_abs_err_steps": 30.0,
+        "p90_abs_err_steps": 130.3,
+        "mean_abs_err_steps": 59.26190476190476,
+        "within_5_frac": 0.13095238095238096,
+        "within_10_frac": 0.27380952380952384
+      }
+    }
+  ]
+}

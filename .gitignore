@@ -44,6 +44,7 @@ datasets_perlmutter/
 # regenerable from the per-mineral parquets / runs and live on
 # CFS / Lustre.
 trajectory_models/*.pkl
+trajectory_models_v2/*.pkl
 trajectory_models_smoke/
 
 # Local cache of GBT/CSV/scenarios pulled from CFS / scratch for

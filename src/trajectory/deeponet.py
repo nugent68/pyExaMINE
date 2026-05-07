@@ -248,11 +248,14 @@ class TrajectoryMetrics:
     test_relative_rmse: float       # rmse / mean(|y|)
 
 
-#: Architecture variants the bundle understands.  ``"deeponet"`` is
-#: the v1 trunk-of-time-only model; ``"deeponet_phase"`` adds the
-#: scenario-derived event-phase features.
+#: Architecture variants the bundle understands.
+#:   ``"deeponet"``         v1 trunk-of-time-only model.
+#:   ``"deeponet_phase"``   v2: trunk also sees event-phase features.
+#:   ``"hybrid"``           v3: smooth baseline (DeepONet over knobs+t)
+#:                          + sum of per-event impulse-responses.
 ARCH_DEEPONET: str = "deeponet"
 ARCH_DEEPONET_PHASE: str = "deeponet_phase"
+ARCH_HYBRID: str = "hybrid"
 
 
 @dataclass
@@ -283,13 +286,24 @@ class MineralTrajectoryBundle:
     metrics: TrajectoryMetrics | None = None
     seed: int = 0
     arch: str = ARCH_DEEPONET
+    #: Hyperparameter dict for the hybrid model (only used when
+    #: ``arch == ARCH_HYBRID``).  Captures the kwargs needed by
+    #: :class:`hybrid.HybridTrajectoryModel`.  Empty for non-hybrid
+    #: bundles to keep the on-disk pickle compact.
+    hybrid_config: dict = field(default_factory=dict)
 
     def is_phase(self) -> bool:
         return getattr(self, "arch", ARCH_DEEPONET) == ARCH_DEEPONET_PHASE
 
+    def is_hybrid(self) -> bool:
+        return getattr(self, "arch", ARCH_DEEPONET) == ARCH_HYBRID
+
     def build_model(self) -> nn.Module:
-        if self.is_phase():
-            m: nn.Module = DeepONetPhase(
+        if self.is_hybrid():
+            from .hybrid import HybridTrajectoryModel
+            m: nn.Module = HybridTrajectoryModel(**self.hybrid_config)
+        elif self.is_phase():
+            m = DeepONetPhase(
                 feature_dim=self.feature_dim,
                 basis_dim=self.basis_dim,
                 branch_hidden=list(self.branch_hidden),
@@ -430,7 +444,34 @@ def predict_trajectory(
     feats_rep = feats.unsqueeze(1).expand(B, T, F).reshape(B * T, F)
     t_rep = t_norm.unsqueeze(0).expand(B, T).reshape(B * T)
 
-    if bundle.is_phase():
+    if bundle.is_hybrid():
+        if scenarios is None or len(scenarios) != B:
+            raise ValueError(
+                "hybrid bundles need a `scenarios=` list of length B"
+            )
+        from .hybrid import (
+            encode_baseline_knobs, encode_events,
+        )
+        # (B, F_b) baseline-knob features + (B, MAX_E) event tensors.
+        kn = torch.stack([encode_baseline_knobs(s) for s in scenarios]).to(device)
+        ev_id_l, ev_st_l, ev_du_l, ev_ac_l = [], [], [], []
+        for s in scenarios:
+            ids, st, du, ac = encode_events(s, bundle.mineral, n_steps=bundle.n_steps)
+            ev_id_l.append(ids); ev_st_l.append(st); ev_du_l.append(du); ev_ac_l.append(ac)
+        ev_id = torch.stack(ev_id_l).to(device)
+        ev_st = torch.stack(ev_st_l).to(device)
+        ev_du = torch.stack(ev_du_l).to(device)
+        ev_ac = torch.stack(ev_ac_l).to(device)
+        # Broadcast knobs and event tensors over T.
+        kn_rep = kn.unsqueeze(1).expand(B, T, kn.shape[-1]).reshape(B * T, -1)
+        ev_id_rep = ev_id.unsqueeze(1).expand(B, T, MAX_EVENT_SLOTS).reshape(B * T, -1)
+        ev_st_rep = ev_st.unsqueeze(1).expand(B, T, MAX_EVENT_SLOTS).reshape(B * T, -1)
+        ev_du_rep = ev_du.unsqueeze(1).expand(B, T, MAX_EVENT_SLOTS).reshape(B * T, -1)
+        ev_ac_rep = ev_ac.unsqueeze(1).expand(B, T, MAX_EVENT_SLOTS).reshape(B * T, -1)
+        y_hat_norm = model(
+            kn_rep, t_rep, ev_id_rep, ev_st_rep, ev_du_rep, ev_ac_rep,
+        ).reshape(B, T)
+    elif bundle.is_phase():
         if scenarios is None or len(scenarios) != B:
             raise ValueError(
                 "phase bundles need a `scenarios=` list of length B"
