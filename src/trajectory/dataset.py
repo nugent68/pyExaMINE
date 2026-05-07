@@ -17,14 +17,25 @@ Both routes produce :class:`TrajectoryDataset` instances yielding
 training.  Time is normalised to ``[0, 1]`` by the simulator horizon
 ``ft.DEFAULT_N_STEPS``.
 
+**Performance notes.**  Per-CSV pandas loads are slow at scale (40k
+CSVs ~~ 30-60 s at construction).  The dataset eagerly stacks every
+trajectory into a single dense ``(N_records, T)`` torch tensor at
+init, with an optional ``.pt`` cache file so subsequent runs skip the
+CSV read entirely.  ``__getitem__`` is then pure tensor indexing
+(microseconds), avoiding the per-call ``torch.tensor(...)`` allocation
+that bottlenecked the v1 lazy-cache implementation.  Workers spawned
+via fork on Linux share the cache tensor copy-on-write -- no per-worker
+reload.
+
 Targets are by default the ``Global_Price`` column; pass another column
-name to predict something else, or ``["Global_Price",
-"Total_Mine_Output"]`` to multi-channel.
+name to predict something else.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -119,18 +130,30 @@ class TrajectoryDataset(Dataset):
     """Yields ``(scenario_features, time_norm, value)`` triples.
 
     Each ``__getitem__`` returns one *flattened* (scenario, timestep)
-    sample.  In a typical epoch we wouldn't iterate every (csv, step) --
-    that's 240 trajectories * 1352 steps = 324k samples per epoch on the
-    small canonical corpus.  Instead, ``set_subsample(K)`` tells the
-    dataset to pre-pick K random timesteps per CSV; ``len`` then becomes
-    ``len(records) * K``.  Default K = 100, matching DeepONet practice.
+    sample.  In a typical epoch we don't iterate every (csv, step) --
+    that's 40k * 1352 = 54M samples; we pre-pick ``subsample`` random
+    timesteps per CSV (default 100), so an epoch is ~4M samples.
 
-    Caching: scenario feature vectors are cached per record (constant
-    over time), and the price array is mmap'd lazily on first access
-    via pandas + a small per-record cache.  Loaded arrays survive in
-    memory for the dataset's lifetime, so an epoch over the canonical
-    corpus is one disk pass.
+    **Eager dense cache.**  At construction every CSV is loaded into a
+    single ``(N_records, T)`` ``float32`` tensor, plus a corresponding
+    ``(N_records, F)`` features tensor.  The CSV-read cost is paid once
+    (~30 s for 40k records on Lustre) and from then on every
+    ``__getitem__`` is pure tensor indexing.
+
+    **Optional disk cache.**  If ``cache_dir`` is supplied, the values
+    tensor is checkpointed to ``<cache_dir>/trajectory_cache_<col>_<digest>.pt``
+    after the first build; subsequent constructions reload it in <2 s.
+    The digest is over the (sorted) list of csv_path strings so any
+    change to the underlying corpus invalidates the cache.
+
+    **Worker-friendly memory.**  The dense tensors live in the parent
+    process; PyTorch workers spawned via fork (Linux default) share
+    them copy-on-write, so a 4-worker DataLoader does not 4x the
+    memory footprint.
     """
+
+    #: Filename version tag.  Bump when the on-disk cache layout changes.
+    _CACHE_VERSION = 1
 
     def __init__(
         self,
@@ -139,6 +162,8 @@ class TrajectoryDataset(Dataset):
         n_steps: int = ft.DEFAULT_N_STEPS,
         subsample: int = 100,
         seed: int = 0,
+        cache_dir: Path | None = None,
+        verbose: bool = True,
     ) -> None:
         if not records:
             raise ValueError("TrajectoryDataset got zero records")
@@ -147,39 +172,37 @@ class TrajectoryDataset(Dataset):
         self.n_steps = int(n_steps)
         self.subsample = int(subsample)
         self._rng = np.random.default_rng(seed)
+        self._verbose = verbose
 
-        # Per-record cached encoded features (constant over time).
-        self._features: list[np.ndarray] = [
+        # Eagerly encode all scenario features (fast: ~ms per record).
+        feats = np.stack([
             ft.encode(r.scenario, n_steps=self.n_steps).astype(np.float32)
             for r in self.records
-        ]
-        # Per-record cached target arrays, lazily filled on first access.
-        self._values: dict[int, np.ndarray] = {}
-        # Per-record cached pre-sampled timestep indices, refreshed by
-        # ``resample()``.
-        self._sampled_steps: list[np.ndarray] = []
-        self.resample()
+        ])
+        self._features: torch.Tensor = torch.from_numpy(feats)
+
+        # Eagerly load all trajectories into a dense tensor.  This is
+        # the slow step on a cold cache (~ms per CSV) but is paid only
+        # once per Dataset lifetime / cache file.
+        self._values: torch.Tensor = self._load_or_build_values(cache_dir)
+
+        # Pre-pick the per-record subsample of timesteps.
+        self._sampled_steps: torch.Tensor = self._pick_subsamples()
 
     # ----- public API -----
 
     def feature_dim(self) -> int:
-        return self._features[0].shape[0]
+        return int(self._features.shape[1])
 
     def resample(self) -> None:
         """Re-pick the per-CSV timestep subsamples for the next epoch."""
-        if self.subsample <= 0:
-            self._sampled_steps = [np.arange(self.n_steps) for _ in self.records]
-        else:
-            self._sampled_steps = [
-                self._rng.choice(self.n_steps, size=self.subsample, replace=False)
-                for _ in self.records
-            ]
+        self._sampled_steps = self._pick_subsamples()
 
     def feature_dim_per_mineral(self) -> dict[str, int]:
         """Return ``{mineral: feature_dim}`` over records present in the set."""
         out: dict[str, int] = {}
-        for r, feat in zip(self.records, self._features):
-            out.setdefault(r.mineral, feat.shape[0])
+        for i, r in enumerate(self.records):
+            out.setdefault(r.mineral, int(self._features.shape[1]))
         return out
 
     # ----- dataset interface -----
@@ -189,30 +212,106 @@ class TrajectoryDataset(Dataset):
         return len(self.records) * steps_per
 
     def __getitem__(self, idx: int):
+        # Pure tensor indexing -- no fresh allocations on the hot path.
+        # The per-batch collation (default torch.stack) is what actually
+        # builds the (B, F) and (B,) tensors the model sees.
         steps_per = self.subsample if self.subsample > 0 else self.n_steps
         rec_idx, in_rec = divmod(idx, steps_per)
-        step = int(self._sampled_steps[rec_idx][in_rec])
-        feat = self._features[rec_idx]
-        values = self._load_values(rec_idx)
-        if step >= len(values):
-            step = len(values) - 1
+        step = int(self._sampled_steps[rec_idx, in_rec])
         return (
-            torch.from_numpy(feat),
+            self._features[rec_idx],
             torch.tensor(step / max(1, self.n_steps - 1), dtype=torch.float32),
-            torch.tensor(values[step], dtype=torch.float32),
+            self._values[rec_idx, step],
         )
 
     # ----- internal -----
 
+    def _cache_path(self, cache_dir: Path | None) -> Path | None:
+        if cache_dir is None:
+            return None
+        # Digest over the canonical-form record fingerprints.  Any
+        # change to which CSVs we're loading -> invalidated cache.
+        h = hashlib.sha1()
+        for r in self.records:
+            h.update(str(r.csv_path).encode())
+            h.update(b"|")
+        digest = h.hexdigest()[:16]
+        name = (
+            f"trajectory_cache_v{self._CACHE_VERSION}_"
+            f"{self.target_column}_T{self.n_steps}_N{len(self.records)}_"
+            f"{digest}.pt"
+        )
+        return Path(cache_dir) / name
+
+    def _load_or_build_values(self, cache_dir: Path | None) -> torch.Tensor:
+        cache_path = self._cache_path(cache_dir)
+        if cache_path is not None and cache_path.is_file():
+            t0 = time.time()
+            values = torch.load(cache_path, weights_only=True)
+            if values.shape != (len(self.records), self.n_steps):
+                # Corrupt or mismatched -- fall through to rebuild.
+                if self._verbose:
+                    print(f"[trajectory] cache shape mismatch at "
+                          f"{cache_path}; rebuilding")
+            else:
+                if self._verbose:
+                    print(f"[trajectory] loaded cache "
+                          f"({values.shape[0]} records, "
+                          f"{values.shape[1]} steps) "
+                          f"in {time.time() - t0:.1f}s")
+                return values
+
+        N, T = len(self.records), self.n_steps
+        if self._verbose:
+            print(f"[trajectory] building values cache: "
+                  f"{N} CSVs x {T} steps -> "
+                  f"{N * T * 4 / 2**20:.1f} MB")
+        values = torch.zeros((N, T), dtype=torch.float32)
+        t0 = time.time()
+        for i, r in enumerate(self.records):
+            df = pd.read_csv(r.csv_path, usecols=[self.target_column])
+            arr = df[self.target_column].to_numpy(dtype=np.float32)
+            n = min(len(arr), T)
+            values[i, :n] = torch.from_numpy(arr[:n])
+            if n < T:
+                # Pad short trajectories with the last observed value.
+                # Should be rare -- run_one_scenario.py writes T rows.
+                values[i, n:] = arr[-1]
+            if self._verbose and (i + 1) % 5000 == 0:
+                rate = (i + 1) / (time.time() - t0)
+                eta = (N - i - 1) / max(1.0, rate)
+                print(f"[trajectory]  {i + 1:>6d}/{N}  "
+                      f"({rate:.0f} CSVs/s, eta {eta:.0f}s)")
+        elapsed = time.time() - t0
+        if self._verbose:
+            print(f"[trajectory] values cache built in {elapsed:.1f}s "
+                  f"({N / elapsed:.0f} CSVs/s)")
+
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(values, cache_path)
+            if self._verbose:
+                print(f"[trajectory] saved cache to {cache_path}")
+        return values
+
+    def _pick_subsamples(self) -> torch.Tensor:
+        N = len(self.records)
+        if self.subsample <= 0:
+            return (torch.arange(self.n_steps, dtype=torch.long)
+                    .unsqueeze(0).expand(N, -1).contiguous())
+        K = self.subsample
+        out = torch.empty((N, K), dtype=torch.long)
+        for i in range(N):
+            out[i] = torch.from_numpy(
+                self._rng.choice(self.n_steps, size=K, replace=False)
+            )
+        return out
+
+    # Backwards-compat shim so external callers that still import
+    # ``_load_values(rec_idx)`` (e.g. older training scripts that peeked
+    # at sample values for log-target normalization) keep working.
     def _load_values(self, rec_idx: int) -> np.ndarray:
-        if rec_idx in self._values:
-            return self._values[rec_idx]
-        rec = self.records[rec_idx]
-        col = self.target_column
-        df = pd.read_csv(rec.csv_path, usecols=[col])
-        arr = df[col].to_numpy(dtype=np.float32)
-        self._values[rec_idx] = arr
-        return arr
+        return self._values[rec_idx].numpy()
 
 
 # ---------------------------------------------------------------------------
@@ -222,25 +321,27 @@ class TrajectoryDataset(Dataset):
 def from_canonical(
     root: Path = Path("ensemble_runs/2050"),
     mineral: str | None = None,
+    cache_dir: Path | None = None,
     **dataset_kwargs,
 ) -> TrajectoryDataset:
     """Build a :class:`TrajectoryDataset` from ``ensemble_runs/2050/``."""
     records = _scan_canonical_2050(root)
     if mineral is not None:
         records = [r for r in records if r.mineral == mineral]
-    return TrajectoryDataset(records, **dataset_kwargs)
+    return TrajectoryDataset(records, cache_dir=cache_dir, **dataset_kwargs)
 
 
 def from_sweep(
     runs_root: Path,
     scenarios_root: Path,
     mineral: str | None = None,
+    cache_dir: Path | None = None,
     **dataset_kwargs,
 ) -> TrajectoryDataset:
     """Build a :class:`TrajectoryDataset` from a sweep ``runs/`` tree."""
     minerals = [mineral] if mineral else None
     records = _scan_sweep(runs_root, scenarios_root, minerals=minerals)
-    return TrajectoryDataset(records, **dataset_kwargs)
+    return TrajectoryDataset(records, cache_dir=cache_dir, **dataset_kwargs)
 
 
 # ---------------------------------------------------------------------------

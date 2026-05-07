@@ -93,6 +93,13 @@ def _parse_args() -> argparse.Namespace:
     train.add_argument("--device", default=None,
                        help="cpu | cuda | mps. Auto-detect if omitted.")
     train.add_argument("--num-workers", type=int, default=0)
+    train.add_argument("--cache-dir", type=Path, default=None,
+                       help="Directory to cache pre-loaded trajectory tensors. "
+                            "First run writes a .pt; subsequent runs reload it "
+                            "in seconds instead of re-reading every CSV.")
+    train.add_argument("--persistent-workers", action="store_true",
+                       help="Reuse DataLoader workers between epochs (skips "
+                            "re-fork cost).")
     return p.parse_args()
 
 
@@ -137,15 +144,18 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     train_ds = td.TrajectoryDataset(
         train_recs, target_column=args.target_column,
         subsample=args.subsample, seed=args.seed,
+        cache_dir=args.cache_dir,
     )
     val_ds = td.TrajectoryDataset(
         val_recs, target_column=args.target_column,
         subsample=max(args.subsample, 200), seed=args.seed + 1,
+        cache_dir=args.cache_dir,
     )
     test_ds = td.TrajectoryDataset(
         test_recs, target_column=args.target_column,
         subsample=0,    # full trajectory at test time
         seed=args.seed + 2,
+        cache_dir=args.cache_dir,
     )
     feat_dim = train_ds.feature_dim()
 
@@ -180,12 +190,15 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     loss_fn = torch.nn.MSELoss()
 
+    pw = args.persistent_workers and args.num_workers > 0
     train_loader_kwargs = dict(batch_size=args.batch_size,
                                shuffle=True, num_workers=args.num_workers,
-                               pin_memory=(device.type == "cuda"))
+                               pin_memory=(device.type == "cuda"),
+                               persistent_workers=pw)
     val_loader_kwargs = dict(batch_size=args.batch_size,
                              num_workers=args.num_workers,
-                             pin_memory=(device.type == "cuda"))
+                             pin_memory=(device.type == "cuda"),
+                             persistent_workers=pw)
 
     print(f"  feature_dim={feat_dim} basis_dim={args.basis_dim} "
           f"params={sum(p.numel() for p in model.parameters()):,}")

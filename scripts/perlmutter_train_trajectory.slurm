@@ -79,7 +79,9 @@ shifter --module=gpu --volume="${DATA_ROOT}:/data" \
         --batch-size ${BATCH_SIZE} \
         --lr ${LR} \
         --device cuda \
-        --num-workers 4"
+        --num-workers 4 \
+        --persistent-workers \
+        --cache-dir /data/trajectory_cache"
 
 echo
 echo "Finished: $(date)"
