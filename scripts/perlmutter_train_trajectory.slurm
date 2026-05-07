@@ -18,7 +18,7 @@
 #   sbatch --export=DATA_ROOT=$CFS/amsc001/www/surrogate_data \
 #          scripts/perlmutter_train_trajectory.slurm
 #
-#SBATCH --image=docker:nugent68/pyexamine:37d8827
+#SBATCH --image=docker:nugent68/pyexamine:175f086
 #SBATCH --account=amsc001
 #SBATCH --constraint=gpu
 #SBATCH --qos=debug

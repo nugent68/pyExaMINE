@@ -25,7 +25,7 @@
 #
 # Default ask: 8 nodes / 2.5 hr / regular_milan_ss11 / single submission.
 #
-#SBATCH --image=docker:nugent68/pyexamine:37d8827
+#SBATCH --image=docker:nugent68/pyexamine:175f086
 #SBATCH --account=amsc001
 #SBATCH --constraint=cpu
 #SBATCH --qos=regular
