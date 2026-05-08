@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Compact per-scenario simulator-output CSVs into per-mineral HDF5 files.
+"""Compact per-scenario simulator outputs into per-mineral HDF5 files.
 
-The simulator writes one CSV per (scenario, seed) into
-``runs/<mineral>/NNNNNN.csv``.  At our planned 10x scale that's
-~1.2M small files -- annoying to ``ls``, ``tar``, ``rsync``, and
-slow to read at training time (pandas.read_csv per file).
+Inputs come from ``run_one_scenario.py`` and can be either format:
+  * ``runs/<mineral>/NNNNNN.csv``   (legacy, --format csv)
+  * ``runs/<mineral>/NNNNNN.h5``    (new, --format h5; ~5x smaller
+                                     and ~10x faster to read here)
 
-This script reads all CSVs for a given mineral and consolidates them
-into a single HDF5 file with one ``(N, T)`` ``float32`` dataset per
-column we care about.  Net effect:
+This script auto-detects the per-scenario format by extension, reads
+all of them for a mineral, and consolidates into a single per-mineral
+HDF5 with one ``(N, T)`` ``float32`` dataset per column we care
+about.
 
-    runs/lithium/NNNNNN.csv  x N -> runs_h5/lithium.h5  (one file)
+    runs/lithium/NNNNNN.{csv,h5}  x N -> runs_h5/lithium.h5  (one file)
 
 Layout of the output (h5py-readable, also openable via HDFView):
 
@@ -115,15 +116,65 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _list_csvs(runs_dir: Path) -> list[tuple[int, Path]]:
-    """Sorted ``[(flat_idx, path), ...]`` for ``<runs_dir>/NNNNNN.csv``."""
-    out: list[tuple[int, Path]] = []
-    for p in sorted(runs_dir.glob("*.csv")):
-        try:
-            idx = int(p.stem)
-        except ValueError:
-            continue
-        out.append((idx, p))
+def _list_inputs(runs_dir: Path) -> list[tuple[int, Path]]:
+    """Sorted ``[(flat_idx, path), ...]`` of per-scenario inputs.
+
+    Accepts both ``NNNNNN.csv`` and ``NNNNNN.h5`` (the new
+    ``run_one_scenario.py --format h5`` output).  If both formats
+    coexist for the same index, prefers H5 (newer, smaller).
+    """
+    by_idx: dict[int, Path] = {}
+    # CSV first so H5 (if present) overrides.
+    for ext in (".csv", ".h5"):
+        for p in sorted(runs_dir.glob(f"*{ext}")):
+            try:
+                idx = int(p.stem)
+            except ValueError:
+                continue
+            by_idx[idx] = p
+    return sorted(by_idx.items())
+
+
+def _read_one_scenario(path: Path, columns: list[str], n_steps: int):
+    """Return ``{col: float32 ndarray of length n_steps}`` for one scenario.
+
+    Dispatches by extension: CSV -> pandas.read_csv; H5 -> h5py read
+    of the per-column datasets.  Missing columns get zeroed arrays;
+    short trajectories get tail-padded (matches dataset.py logic).
+    """
+    import h5py
+    import numpy as np
+    out: dict[str, np.ndarray] = {}
+    if path.suffix == ".h5":
+        with h5py.File(path, "r") as f:
+            for col in columns:
+                if col in f:
+                    arr = f[col][:].astype(np.float32, copy=False)
+                else:
+                    arr = np.zeros(n_steps, dtype=np.float32)
+                out[col] = _fit_to_length(arr, n_steps)
+    else:                                            # .csv
+        df = pd.read_csv(path, usecols=lambda c: c in columns)
+        for col in columns:
+            if col in df.columns:
+                arr = df[col].to_numpy(dtype=np.float32)
+            else:
+                arr = np.zeros(n_steps, dtype=np.float32)
+            out[col] = _fit_to_length(arr, n_steps)
+    return out
+
+
+def _fit_to_length(arr, n_steps: int):
+    """Truncate or tail-pad a 1-D array to exactly ``n_steps`` entries."""
+    import numpy as np
+    n = min(len(arr), n_steps)
+    if len(arr) == n_steps:
+        return arr.astype(np.float32, copy=False)
+    out = np.zeros(n_steps, dtype=np.float32)
+    if n > 0:
+        out[:n] = arr[:n]
+        if n < n_steps:
+            out[n:] = arr[-1]
     return out
 
 
@@ -139,13 +190,15 @@ def _compact_one(
     chunk_rows: int,
     progress_every: int,
 ) -> None:
-    csv_files = _list_csvs(runs_dir)
-    if not csv_files:
-        print(f"[{mineral}] no CSVs at {runs_dir}; skipping")
+    inputs = _list_inputs(runs_dir)
+    if not inputs:
+        print(f"[{mineral}] no per-scenario inputs at {runs_dir}; skipping")
         return
-    flat_idxs = [i for i, _ in csv_files]
-    N, T = len(csv_files), n_steps
-    print(f"[{mineral}] compacting {N} CSVs ({len(columns)} cols, "
+    flat_idxs = [i for i, _ in inputs]
+    N, T = len(inputs), n_steps
+    n_h5 = sum(1 for _, p in inputs if p.suffix == ".h5")
+    print(f"[{mineral}] compacting {N} files "
+          f"(CSV={N - n_h5}, H5={n_h5}; {len(columns)} cols, "
           f"T={T}) -> {out_path}")
 
     # Total scenario count (informational; lets readers know if the
@@ -208,26 +261,15 @@ def _compact_one(
                 col_datasets[col][start:start + n] = arr[:n]
 
         i = 0
-        for idx, csv in csv_files:
-            df = pd.read_csv(csv, usecols=lambda c: c in columns)
-            if not step_filled and "Step" in df.columns:
-                step = df["Step"].to_numpy(dtype=np.int32)
-                col_datasets["Step"][:min(len(step), T)] = step[:T]
+        for idx, src_path in inputs:
+            cols_arr = _read_one_scenario(src_path, columns, T)
+            if not step_filled and "Step" in cols_arr:
+                col_datasets["Step"][:] = cols_arr["Step"].astype(np.int32)
                 step_filled = True
-
             for col in columns:
                 if col == "Step":
                     continue
-                if col not in df.columns:
-                    arr = np.zeros(T, dtype=np.float32)
-                else:
-                    arr = df[col].to_numpy(dtype=np.float32)
-                n = min(len(arr), T)
-                buf[col][buf_n, :n] = arr[:n]
-                if n < T:
-                    # Pad with last value (matches dataset.py
-                    # convention); rare since runs land at full T.
-                    buf[col][buf_n, n:] = arr[-1] if n > 0 else 0.0
+                buf[col][buf_n] = cols_arr[col]
 
             buf_n += 1
             i += 1
@@ -239,7 +281,7 @@ def _compact_one(
                 rate = i / (time.time() - t0)
                 eta = (N - i) / max(1.0, rate)
                 print(f"[{mineral}]  {i:>6d}/{N}  "
-                      f"({rate:>5.0f} CSVs/s  eta {eta:>5.0f}s)")
+                      f"({rate:>5.0f} files/s  eta {eta:>5.0f}s)")
 
         # Flush trailing partial buffer.
         if buf_n > 0:
