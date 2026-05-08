@@ -13,23 +13,31 @@
 # What gets swept:
 #   3 minerals (Li, Ni, Pt) x N variants (one per HYBRID_VARIANTS entry
 #   in src/trajectory/hybrid.py) = 24 runs at the default knob set.
-#   8 nodes x 3 tasks per node = 24 simultaneous runs, each with 42
-#   cores via OMP_NUM_THREADS.
+#   12 nodes x 2 tasks per node = 24 simultaneous runs.
 #
-# Per-run wall on a single CPU node, hybrid 50 epochs (rough):
-#   * ~2-3 min/epoch threaded across 42 cores
-#   * 50 epochs * 2.5 min = ~2 hours
-# 2.5 hr ask leaves ~30 min margin.
+# Why 2 tasks per node and not 3 (and not 1 either):
+# A 3-tasks-per-node configuration on AMD Milan (job 52680428)
+# saw per-epoch wall of ~175 sec; the same code at 2 tasks per
+# node ran at ~45 sec.  Going from 2 -> 3 oversubscribes the OS
+# (126 of 128 cores active across 3 procs) and forces
+# cross-socket NUMA traffic for at least one task.  2 tasks per
+# node lets each task pin to a single 64-core socket cleanly,
+# at the cost of needing 12 nodes instead of 8 to host 24 tasks.
+#
+# Per-run wall on a single CPU node, hybrid 50 epochs:
+#   * ~45-60 s/epoch with 64 cores via OMP_NUM_THREADS
+#   * 50 epochs * 50s = ~42 min per task
+# 1 hr cap leaves ~18 min margin.
 #
 #SBATCH --image=docker:nugent68/pyexamine:175f086
 #SBATCH --account=amsc001
 #SBATCH --constraint=cpu
 #SBATCH --qos=regular
-#SBATCH --nodes=8
-#SBATCH --ntasks=24                # 3 trainings per node x 8 nodes
-#SBATCH --ntasks-per-node=3
-#SBATCH --cpus-per-task=42         # 128 cores / 3 tasks ~= 42
-#SBATCH --time=01:30:00
+#SBATCH --nodes=12
+#SBATCH --ntasks=24                # 2 trainings per node x 12 nodes
+#SBATCH --ntasks-per-node=2
+#SBATCH --cpus-per-task=64         # 128 cores / 2 tasks = 64 (one socket each)
+#SBATCH --time=01:00:00
 #SBATCH --job-name=pyexamine_traj_sweep
 #SBATCH --output=logs/traj_sweep_%j.log
 
