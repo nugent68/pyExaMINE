@@ -29,7 +29,7 @@
 #SBATCH --ntasks=24                # 3 trainings per node x 8 nodes
 #SBATCH --ntasks-per-node=3
 #SBATCH --cpus-per-task=42         # 128 cores / 3 tasks ~= 42
-#SBATCH --time=02:30:00
+#SBATCH --time=01:30:00
 #SBATCH --job-name=pyexamine_traj_sweep
 #SBATCH --output=logs/traj_sweep_%j.log
 
@@ -86,7 +86,7 @@ out_subdir="${OUT_SUBDIR}/\${mineral}_\${variant}"
 log="logs/traj_sweep_${SLURM_JOB_ID}_\${mineral}_\${variant}.log"
 echo "[\$(date +%T)] task \$SLURM_PROCID on \$(hostname): \${mineral} / \${variant}" | tee "\$log"
 shifter --volume="${DATA_ROOT}:/data" \\
-    bash -c "cd /app && OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK} MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK} /app/.venv/bin/python scripts/train_trajectory.py \\
+    bash -c "cd /app && OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK} MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK} PYTHONUNBUFFERED=1 /app/.venv/bin/python -u scripts/train_trajectory.py \\
         --sweep-runs /data/surrogate_data/runs \\
         --sweep-scenarios /data/surrogate_data/scenarios \\
         --arch hybrid \\
