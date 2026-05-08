@@ -80,12 +80,20 @@ DEFAULT_TARGET = "Global_Price"
 
 @dataclass
 class TrajectoryRecord:
-    """One CSV's worth of trajectory data plus its scenario metadata."""
+    """One trajectory's metadata.
+
+    Source can be either an individual CSV (``csv_path`` is set) or a
+    row inside a per-mineral compacted HDF5 (``h5_path`` + ``h5_row``
+    are set).  See :func:`from_sweep` and :func:`from_hdf5_sweep` for
+    the two factory paths.
+    """
     csv_path: Path
     mineral: str
     scenario: dict
     seed: int | None = None
     folder: str | None = None    # for canonical runs
+    h5_path: Path | None = None
+    h5_row: int | None = None    # row index within h5_path's data array
 
 
 def _scan_canonical_2050(root: Path) -> list[TrajectoryRecord]:
@@ -395,6 +403,10 @@ class TrajectoryDataset(Dataset):
         return self._build_values_from_csvs()
 
     def _build_values_from_csvs(self) -> torch.Tensor:
+        # Dispatch: if every record points at an HDF5 source, use the
+        # bulk HDF5 path (orders of magnitude faster on 40k+ records).
+        if self.records and all(r.h5_path is not None for r in self.records):
+            return self._build_values_from_hdf5()
         N, T = len(self.records), self.n_steps
         if self._verbose:
             print(f"[trajectory] building values cache: "
@@ -419,6 +431,55 @@ class TrajectoryDataset(Dataset):
         if self._verbose:
             print(f"[trajectory] values cache built in {elapsed:.1f}s "
                   f"({N / elapsed:.0f} CSVs/s)")
+        return values
+
+    def _build_values_from_hdf5(self) -> torch.Tensor:
+        """Bulk-load values from per-mineral HDF5 files.
+
+        Groups records by their ``h5_path`` (one per mineral), opens
+        each file once, and pulls the target-column slice for the
+        rows we need in a single read.  Orders of magnitude faster
+        than the per-CSV path at scale.
+        """
+        import h5py                                  # local import
+        from collections import defaultdict
+        N, T = len(self.records), self.n_steps
+        if self._verbose:
+            print(f"[trajectory] building values cache from HDF5: "
+                  f"{N} records x {T} steps -> "
+                  f"{N * T * 4 / 2**20:.1f} MB")
+        values = torch.zeros((N, T), dtype=torch.float32)
+        by_h5: dict[Path, list[tuple[int, int]]] = defaultdict(list)
+        for i, r in enumerate(self.records):
+            by_h5[r.h5_path].append((i, int(r.h5_row)))
+        t0 = time.time()
+        for h5_path, rows in by_h5.items():
+            with h5py.File(h5_path, "r") as h:
+                if self.target_column not in h:
+                    raise KeyError(
+                        f"{h5_path} has no dataset {self.target_column!r}"
+                    )
+                ds = h[self.target_column]
+                ds_T = ds.shape[1]
+                if ds_T < T:
+                    raise ValueError(
+                        f"{h5_path} has T={ds_T}; expected T>={T}"
+                    )
+                # HDF5 fancy indexing requires sorted indices; sort
+                # rows then unscramble afterwards.
+                rows.sort(key=lambda x: x[1])
+                wanted = np.asarray([r for _, r in rows], dtype=np.int64)
+                arr = ds[wanted, :T]                 # (M, T) float32
+            for (i, _), src_row in zip(rows, range(len(rows))):
+                values[i] = torch.from_numpy(arr[src_row])
+            if self._verbose:
+                rate = len(rows) / max(0.001, time.time() - t0)
+                print(f"[trajectory]   {h5_path.name}: "
+                      f"{len(rows)} records ({rate:.0f}/s)")
+        elapsed = time.time() - t0
+        if self._verbose:
+            print(f"[trajectory] HDF5 values cache built in "
+                  f"{elapsed:.1f}s ({N / elapsed:.0f} records/s)")
         return values
 
     def _pick_subsamples(self) -> torch.Tensor:
@@ -468,6 +529,66 @@ def from_sweep(
     """Build a :class:`TrajectoryDataset` from a sweep ``runs/`` tree."""
     minerals = [mineral] if mineral else None
     records = _scan_sweep(runs_root, scenarios_root, minerals=minerals)
+    return TrajectoryDataset(records, cache_dir=cache_dir, **dataset_kwargs)
+
+
+def _scan_hdf5_sweep(
+    h5_root: Path,
+    scenarios_root: Path,
+    minerals: Sequence[str] | None = None,
+) -> list[TrajectoryRecord]:
+    """Walk ``<h5_root>/<mineral>.h5`` paired with scenario JSONs.
+
+    Each row in the per-mineral HDF5's ``meta/flat_idx`` dataset
+    corresponds to one (scenario, seed) combination -- exactly the
+    same flat-index convention as the CSV tree, just denser on disk.
+    """
+    import h5py
+    h5_root = Path(h5_root)
+    scenarios_root = Path(scenarios_root)
+    minerals = minerals or sorted(ft.COUNTRIES_BY_MINERAL)
+    records: list[TrajectoryRecord] = []
+    for mineral in minerals:
+        h5_path = h5_root / f"{mineral}.h5"
+        scen_path = scenarios_root / f"{mineral}.json"
+        if not h5_path.is_file() or not scen_path.is_file():
+            continue
+        with scen_path.open() as f:
+            scenarios = json.load(f)
+        with h5py.File(h5_path, "r") as h:
+            flat_idxs = h["meta/flat_idx"][:]
+        for h5_row, flat_idx in enumerate(flat_idxs):
+            i = int(flat_idx)
+            if i < 0 or i >= len(scenarios):
+                continue
+            scen = scenarios[i]
+            seed = int(scen.get("random_seed", 0))
+            records.append(TrajectoryRecord(
+                csv_path=h5_path,         # legacy field; not read here
+                mineral=mineral,
+                scenario=scen, seed=seed,
+                h5_path=h5_path,
+                h5_row=int(h5_row),
+            ))
+    return records
+
+
+def from_hdf5_sweep(
+    h5_root: Path,
+    scenarios_root: Path,
+    mineral: str | None = None,
+    cache_dir: Path | None = None,
+    **dataset_kwargs,
+) -> TrajectoryDataset:
+    """Build a :class:`TrajectoryDataset` from per-mineral HDF5 files.
+
+    Companion to :func:`from_sweep`; takes the output of
+    ``scripts/compact_csvs_to_hdf5.py``.  HDF5 is much faster to read
+    in bulk (no per-file Lustre stat tax, single decompression pass)
+    so the values cache builds in seconds instead of minutes.
+    """
+    minerals = [mineral] if mineral else None
+    records = _scan_hdf5_sweep(h5_root, scenarios_root, minerals=minerals)
     return TrajectoryDataset(records, cache_dir=cache_dir, **dataset_kwargs)
 
 

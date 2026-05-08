@@ -58,11 +58,18 @@ def _parse_args() -> argparse.Namespace:
                      help="Path to a canonical 2050 ensemble tree "
                           "(default ./ensemble_runs/2050).")
     src.add_argument("--sweep-runs", type=Path, default=None,
-                     help="If set, use a sweep runs/ tree instead of the "
-                          "canonical one. Pair with --sweep-scenarios.")
+                     help="If set, use a sweep runs/ tree (per-CSV) "
+                          "instead of the canonical one. Pair with "
+                          "--sweep-scenarios.")
+    src.add_argument("--sweep-h5", type=Path, default=None,
+                     help="If set, use a sweep runs_h5/ tree of "
+                          "per-mineral HDF5 files (compacted by "
+                          "scripts/compact_csvs_to_hdf5.py). Pair with "
+                          "--sweep-scenarios. Mutually exclusive with "
+                          "--sweep-runs.")
     src.add_argument("--sweep-scenarios", type=Path, default=None,
                      help="Scenarios root (with <mineral>.json) for "
-                          "--sweep-runs.")
+                          "--sweep-runs / --sweep-h5.")
     src.add_argument("--mineral",
                      choices=list(ft.COUNTRIES_BY_MINERAL),
                      action="append",
@@ -126,6 +133,13 @@ def _pick_device(arg: str | None) -> torch.device:
 
 
 def _scan_records(args, mineral: str) -> list[td.TrajectoryRecord]:
+    if args.sweep_runs is not None and args.sweep_h5 is not None:
+        raise SystemExit("--sweep-runs and --sweep-h5 are mutually exclusive")
+    if args.sweep_h5 is not None:
+        if args.sweep_scenarios is None:
+            raise SystemExit("--sweep-h5 requires --sweep-scenarios")
+        return td._scan_hdf5_sweep(args.sweep_h5, args.sweep_scenarios,
+                                   minerals=[mineral])
     if args.sweep_runs is not None:
         if args.sweep_scenarios is None:
             raise SystemExit("--sweep-runs requires --sweep-scenarios")
