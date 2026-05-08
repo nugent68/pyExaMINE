@@ -29,7 +29,7 @@
 # small CFS tree; the bulk per-run CSVs live on scratch and can be
 # deleted after build_dataset.py distills them.
 #
-#SBATCH --image=docker:nugent68/pyexamine:2e5a768
+#SBATCH --image=docker:nugent68/pyexamine:8997586
 #SBATCH --account=amsc001
 #SBATCH --constraint=cpu
 #SBATCH --qos=regular
@@ -48,6 +48,7 @@ set -euo pipefail
 : "${N_TOTAL_PER_MINERAL:=40000}"
 : "${PARALLELISM:=128}"
 : "${DATA_ROOT:=/pscratch/sd/n/nugent/pyExaMINE/surrogate_data}"
+: "${FORMAT:=csv}"                # csv | h5 -- per-scenario writer format
 
 mkdir -p "${DATA_ROOT}/runs" logs
 
@@ -60,6 +61,7 @@ echo "Minerals:      $MINERALS"
 echo "Total/mineral: $N_TOTAL_PER_MINERAL"
 echo "Nodes:         $NODES"
 echo "Parallel/node: $PARALLELISM"
+echo "Format:        $FORMAT"
 echo "Started:       $(date)"
 echo
 
@@ -72,7 +74,7 @@ for MINERAL in $MINERALS; do
     mkdir -p "${DATA_ROOT}/runs/${MINERAL}"
     echo "[${MINERAL}] starting ${N_TOTAL_PER_MINERAL} runs at $(date)"
 
-    export DATA_ROOT MINERAL N_TOTAL_PER_MINERAL PARALLELISM NODES
+    export DATA_ROOT MINERAL N_TOTAL_PER_MINERAL PARALLELISM NODES FORMAT
 
     srun --ntasks="${NODES}" --ntasks-per-node=1 --cpu-bind=none bash <<'NODE_BASH'
         set -euo pipefail
@@ -86,6 +88,7 @@ for MINERAL in $MINERALS; do
                     --scenarios /data/scenarios/${mineral}.json \
                     --index ${idx} \
                     --output-root /data/runs \
+                    --format ${FORMAT} \
                     --skip-existing"
         }
         export -f run_task
