@@ -244,6 +244,123 @@ def build_ensemble_dataset(
     return pd.DataFrame(rows)
 
 
+def build_ensemble_dataset_from_h5(
+    mineral: str,
+    h5_path: Path,
+    scenarios_path: Path,
+    seeds_per_scenario: int,
+    n_steps: int = ft.DEFAULT_N_STEPS,
+) -> pd.DataFrame:
+    """Like :func:`build_ensemble_dataset` but reads from a compacted H5.
+
+    Equivalent to the CSV-iteration path, but bulk-reads the three
+    target-relevant columns (``Global_Price``,
+    ``Fulfilled_Demand_Units``, ``Unfulfilled_Demand_Units``) from the
+    per-mineral aggregate HDF5 once instead of opening N=400000
+    individual CSV / per-scenario HDF5 files.  At 10x scale (1.2M
+    sims) the CSV path would take ~17 hours; this path takes ~5
+    minutes per mineral.
+
+    The output DataFrame is bit-identical to what the CSV path
+    produces for the same scenarios + same seed-count, so existing
+    train_scalar / train_quantile pipelines work unchanged.
+    """
+    import h5py
+
+    with scenarios_path.open() as f:
+        all_entries = json.load(f)
+    if not isinstance(all_entries, list):
+        raise ValueError(f"{scenarios_path}: top-level must be a list")
+    K = int(seeds_per_scenario)
+    if K <= 0:
+        raise ValueError(f"seeds_per_scenario must be positive, got {K}")
+    n_unique, rem = divmod(len(all_entries), K)
+    if rem:
+        raise ValueError(
+            f"{scenarios_path}: {len(all_entries)} entries is not a "
+            f"multiple of seeds_per_scenario={K}"
+        )
+
+    # Bulk-load the columns extract_targets reads.  Total ~6 GB for
+    # the 10x corpus, well within typical node RAM.
+    print(f"[{mineral}] reading H5 columns from {h5_path}")
+    with h5py.File(h5_path, "r") as h:
+        flat_idxs = h["meta/flat_idx"][:]
+        gp = h["Global_Price"][:]
+        fd = h["Fulfilled_Demand_Units"][:]
+        ud = h["Unfulfilled_Demand_Units"][:]
+        if "Step" in h:
+            step_arr = h["Step"][:]
+        else:
+            step_arr = np.arange(gp.shape[1], dtype=np.int32)
+    flat_to_row: dict[int, int] = {
+        int(fi): r for r, fi in enumerate(flat_idxs)
+    }
+    print(f"[{mineral}] loaded {gp.shape[0]} trajectories x "
+          f"{gp.shape[1]} steps")
+
+    feat_names = ft.feature_names(mineral)
+    rows: list[dict] = []
+    n_dropped = 0
+
+    for u in range(n_unique):
+        per_seed: list[dict] = []
+        for k in range(K):
+            flat_idx = u * K + k
+            row_in_h5 = flat_to_row.get(flat_idx)
+            if row_in_h5 is None:
+                continue
+            # extract_targets takes a DataFrame; build the smallest
+            # one that has the three columns it reads.
+            df = pd.DataFrame({
+                "Step": step_arr,
+                "Global_Price": gp[row_in_h5],
+                "Fulfilled_Demand_Units": fd[row_in_h5],
+                "Unfulfilled_Demand_Units": ud[row_in_h5],
+            })
+            t = tg.extract_targets(df, all_entries[flat_idx])
+            if any(np.isfinite(v) for v in t.values()):
+                per_seed.append(t)
+
+        if len(per_seed) < max(2, K // 2):
+            n_dropped += 1
+            continue
+
+        scen = all_entries[u * K]
+        x = ft.encode(scen, n_steps=n_steps)
+        row: dict = {"scenario_index": u, "n_seeds_used": len(per_seed)}
+        for j, name in enumerate(feat_names):
+            row[name] = float(x[j])
+
+        for target in tg.TARGET_NAMES:
+            vals = np.array([t[target] for t in per_seed], dtype=np.float64)
+            if target == "recovery_time_if_recovered":
+                finite = vals[np.isfinite(vals)]
+                if finite.size > 0:
+                    row[f"{target}_mean"] = float(np.mean(finite))
+                    row[f"{target}_std"]  = float(np.std(finite, ddof=0))
+                else:
+                    row[f"{target}_mean"] = float("nan")
+                    row[f"{target}_std"]  = float("nan")
+                row[f"{target}_n_recovered"] = int(finite.size)
+            else:
+                if not np.all(np.isfinite(vals)):
+                    finite = vals[np.isfinite(vals)]
+                    if finite.size == 0:
+                        row[f"{target}_mean"] = float("nan")
+                        row[f"{target}_std"]  = float("nan")
+                        continue
+                    vals = finite
+                row[f"{target}_mean"] = float(np.mean(vals))
+                row[f"{target}_std"]  = float(np.std(vals, ddof=0))
+
+        rows.append(row)
+
+    print(f"[{mineral}] {len(rows)} usable scenarios, {n_dropped} dropped "
+          f"(K={K} seeds/scenario, source=h5)")
+    return pd.DataFrame(rows)
+
+
 def split_xy(
     df: pd.DataFrame, mineral: str,
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str]]:

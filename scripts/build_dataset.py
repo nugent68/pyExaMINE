@@ -32,8 +32,13 @@ from src.surrogate import targets as tg           # noqa: E402
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--runs", type=Path, required=True,
-                   help="Directory holding per-mineral subdirs of run CSVs.")
+    p.add_argument("--runs", type=Path, default=None,
+                   help="Directory holding per-mineral subdirs of run CSVs / "
+                        "H5 files.  Mutually exclusive with --runs-h5.")
+    p.add_argument("--runs-h5", type=Path, default=None,
+                   help="Directory containing per-mineral aggregate HDF5 "
+                        "files (output of compact_csvs_to_hdf5.py).  "
+                        "Faster than --runs at scale (>100k sims).")
     p.add_argument("--scenarios", type=Path, required=True,
                    help="Directory containing <mineral>.json scenario lists.")
     p.add_argument("--out", type=Path, required=True,
@@ -64,28 +69,51 @@ def main() -> int:
     print(f"seeds_per_scenario = {seeds_per_scenario} "
           f"(from {scen_index if scen_index.is_file() else 'default'})")
 
+    if args.runs is None and args.runs_h5 is None:
+        raise SystemExit("must pass either --runs or --runs-h5")
+    if args.runs is not None and args.runs_h5 is not None:
+        raise SystemExit("--runs and --runs-h5 are mutually exclusive")
+
     minerals = args.mineral or list(ft.COUNTRIES_BY_MINERAL)
     summary: dict = {"seeds_per_scenario": seeds_per_scenario, "minerals": {}}
     for mineral in minerals:
-        runs_dir = args.runs / mineral
         scen_path = args.scenarios / f"{mineral}.json"
-        if not runs_dir.is_dir():
-            print(f"[{mineral}] no runs dir at {runs_dir}; skipping")
-            continue
         if not scen_path.is_file():
             print(f"[{mineral}] no scenarios at {scen_path}; skipping")
             continue
 
-        if seeds_per_scenario > 1:
-            df = ds.build_ensemble_dataset(
-                mineral, runs_dir, scen_path,
-                seeds_per_scenario=seeds_per_scenario,
-                n_steps=args.n_steps,
-            )
+        if args.runs_h5 is not None:
+            h5_path = args.runs_h5 / f"{mineral}.h5"
+            if not h5_path.is_file():
+                print(f"[{mineral}] no h5 at {h5_path}; skipping")
+                continue
+            if seeds_per_scenario > 1:
+                df = ds.build_ensemble_dataset_from_h5(
+                    mineral, h5_path, scen_path,
+                    seeds_per_scenario=seeds_per_scenario,
+                    n_steps=args.n_steps,
+                )
+            else:
+                raise SystemExit(
+                    "--runs-h5 path supports seeds_per_scenario>1 only; "
+                    "single-seed builds still iterate the per-CSV "
+                    "tree via --runs"
+                )
         else:
-            df = ds.build_mineral_dataset(
-                mineral, runs_dir, scen_path, n_steps=args.n_steps,
-            )
+            runs_dir = args.runs / mineral
+            if not runs_dir.is_dir():
+                print(f"[{mineral}] no runs dir at {runs_dir}; skipping")
+                continue
+            if seeds_per_scenario > 1:
+                df = ds.build_ensemble_dataset(
+                    mineral, runs_dir, scen_path,
+                    seeds_per_scenario=seeds_per_scenario,
+                    n_steps=args.n_steps,
+                )
+            else:
+                df = ds.build_mineral_dataset(
+                    mineral, runs_dir, scen_path, n_steps=args.n_steps,
+                )
 
         if df.empty:
             print(f"[{mineral}] empty dataset; skipping")
