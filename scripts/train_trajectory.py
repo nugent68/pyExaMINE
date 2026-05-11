@@ -80,12 +80,14 @@ def _parse_args() -> argparse.Namespace:
     arch = p.add_argument_group("model")
     arch.add_argument("--arch", choices=[dn.ARCH_DEEPONET,
                                           dn.ARCH_DEEPONET_PHASE,
-                                          dn.ARCH_HYBRID],
+                                          dn.ARCH_HYBRID,
+                                          dn.ARCH_FNO],
                       default=dn.ARCH_DEEPONET,
                       help="Model variant. deeponet_phase augments the trunk "
                            "with scenario-derived event-phase features. "
                            "hybrid uses smooth-baseline + per-event impulse "
-                           "decomposition.")
+                           "decomposition. fno is a Fourier Neural Operator "
+                           "(global temporal coupling via spectral convs).")
     arch.add_argument("--basis-dim", type=int, default=64)
     arch.add_argument("--branch-hidden", type=int, nargs="+",
                       default=[256, 256])
@@ -96,6 +98,9 @@ def _parse_args() -> argparse.Namespace:
                       help="Named hyperparam variant for --arch hybrid; one "
                            "of the keys in src.trajectory.hybrid.HYBRID_VARIANTS. "
                            "Used by the architecture-sweep slurm script.")
+    arch.add_argument("--fno-variant", default="default",
+                      help="Named hyperparam variant for --arch fno; one of "
+                           "the keys in src.trajectory.fno.FNO_VARIANTS.")
     arch.add_argument("--no-log-target", action="store_true",
                       help="Train on raw target instead of log-target.")
 
@@ -119,6 +124,12 @@ def _parse_args() -> argparse.Namespace:
     train.add_argument("--persistent-workers", action="store_true",
                        help="Reuse DataLoader workers between epochs (skips "
                             "re-fork cost).")
+    train.add_argument("--feature-version",
+                       choices=list(ft.FEATURE_VERSIONS),
+                       default=ft.DEFAULT_FEATURE_VERSION,
+                       help="Feature encoder version.  'v1' = original "
+                            "padded-slot encoding; 'v2' = + per-country / "
+                            "per-chokepoint summaries + interaction terms.")
     return p.parse_args()
 
 
@@ -169,24 +180,35 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
 
     with_phase = (args.arch == dn.ARCH_DEEPONET_PHASE)
     with_hybrid = (args.arch == dn.ARCH_HYBRID)
+    with_fno = (args.arch == dn.ARCH_FNO)
+    # FNO operates on the full uniform 1352-step grid; per-record
+    # subsampling is incompatible with its spectral-conv layers.
+    train_subsample = 0 if with_fno else args.subsample
+    val_subsample   = 0 if with_fno else max(args.subsample, 200)
+    if with_fno and args.subsample != 0:
+        print(f"  --arch fno: overriding --subsample {args.subsample} -> 0 "
+              f"(FNO trains on full 1352-step grid)")
     train_ds = td.TrajectoryDataset(
         train_recs, target_column=args.target_column,
-        subsample=args.subsample, seed=args.seed,
+        subsample=train_subsample, seed=args.seed,
         cache_dir=args.cache_dir,
-        with_phase=with_phase, with_hybrid=with_hybrid,
+        with_phase=with_phase, with_hybrid=with_hybrid, with_fno=with_fno,
+        feature_version=args.feature_version,
     )
     val_ds = td.TrajectoryDataset(
         val_recs, target_column=args.target_column,
-        subsample=max(args.subsample, 200), seed=args.seed + 1,
+        subsample=val_subsample, seed=args.seed + 1,
         cache_dir=args.cache_dir,
-        with_phase=with_phase, with_hybrid=with_hybrid,
+        with_phase=with_phase, with_hybrid=with_hybrid, with_fno=with_fno,
+        feature_version=args.feature_version,
     )
     test_ds = td.TrajectoryDataset(
         test_recs, target_column=args.target_column,
         subsample=0,    # full trajectory at test time
         seed=args.seed + 2,
         cache_dir=args.cache_dir,
-        with_phase=with_phase, with_hybrid=with_hybrid,
+        with_phase=with_phase, with_hybrid=with_hybrid, with_fno=with_fno,
+        feature_version=args.feature_version,
     )
     feat_dim = train_ds.feature_dim()
 
@@ -205,6 +227,12 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
     if with_hybrid:
         from src.trajectory import hybrid as hb     # local import
         hybrid_config = hb.hybrid_config_for_variant(mineral, args.hybrid_variant)
+    fno_config: dict = {}
+    if with_fno:
+        from src.trajectory import fno as fno_mod   # local import
+        fno_config = fno_mod.fno_config_for_variant(
+            mineral, feature_dim=feat_dim, variant=args.fno_variant,
+        )
     bundle = dn.MineralTrajectoryBundle(
         mineral=mineral,
         feature_dim=feat_dim,
@@ -220,6 +248,7 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
         seed=args.seed,
         arch=args.arch,
         hybrid_config=hybrid_config,
+        fno_config=fno_config,
     )
 
     model = bundle.build_model().to(device)
@@ -244,6 +273,7 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
 
     def _forward(batch):
         """Dispatch by tuple length:
+            2-tuple = fno (features, full_targets)
             3-tuple = deeponet (features, t, y)
             4-tuple = deeponet_phase (features, t, phase, y)
             7-tuple = hybrid (knobs, t, ev_id, ev_st, ev_du, ev_ac, y)
@@ -259,6 +289,10 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
             feats = feats.to(device); tnorm = tnorm.to(device)
             phase = phase.to(device); y = y.to(device)
             return y, model(feats, tnorm, phase)
+        if len(batch) == 2:
+            feats, y = batch
+            feats = feats.to(device); y = y.to(device)
+            return y, model(feats)
         feats, tnorm, y = batch
         feats = feats.to(device); tnorm = tnorm.to(device); y = y.to(device)
         return y, model(feats, tnorm)
@@ -356,7 +390,10 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
         "arch": args.arch,
         "hybrid_variant": args.hybrid_variant if with_hybrid else None,
         "hybrid_config": hybrid_config if with_hybrid else None,
+        "fno_variant": args.fno_variant if with_fno else None,
+        "fno_config": fno_config if with_fno else None,
         "feature_dim": feat_dim,
+        "feature_version": args.feature_version,
         "basis_dim": args.basis_dim,
         "branch_hidden": list(args.branch_hidden),
         "trunk_hidden": list(args.trunk_hidden),

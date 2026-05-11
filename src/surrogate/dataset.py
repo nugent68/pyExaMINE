@@ -67,6 +67,7 @@ def build_mineral_dataset(
     runs_dir: Path,
     scenarios_path: Path,
     n_steps: int = ft.DEFAULT_N_STEPS,
+    feature_version: str = ft.DEFAULT_FEATURE_VERSION,
 ) -> pd.DataFrame:
     """Build one mineral's dataset as a flat DataFrame.
 
@@ -95,7 +96,7 @@ def build_mineral_dataset(
         raise ValueError(f"{scenarios_path}: top-level must be a list")
 
     runs = _list_run_csvs(runs_dir)
-    feat_names = ft.feature_names(mineral)
+    feat_names = ft.feature_names_versioned(mineral, version=feature_version)
 
     rows: list[dict] = []
     n_dropped = 0
@@ -118,7 +119,7 @@ def build_mineral_dataset(
             n_dropped += 1
             continue
 
-        x = ft.encode(scen, n_steps=n_steps)
+        x = ft.encode_versioned(scen, n_steps=n_steps, version=feature_version)
         row: dict = {"scenario_index": idx}
         for j, name in enumerate(feat_names):
             row[name] = float(x[j])
@@ -136,6 +137,7 @@ def build_ensemble_dataset(
     scenarios_path: Path,
     seeds_per_scenario: int,
     n_steps: int = ft.DEFAULT_N_STEPS,
+    feature_version: str = ft.DEFAULT_FEATURE_VERSION,
 ) -> pd.DataFrame:
     """Build per-scenario aggregated dataset from K-seed expanded runs.
 
@@ -177,7 +179,7 @@ def build_ensemble_dataset(
             f"multiple of seeds_per_scenario={K}"
         )
 
-    feat_names = ft.feature_names(mineral)
+    feat_names = ft.feature_names_versioned(mineral, version=feature_version)
     rows: list[dict] = []
     n_dropped = 0
 
@@ -204,7 +206,7 @@ def build_ensemble_dataset(
         # Encode features once from the first seed's scenario (all K
         # share the same feature vector by construction).
         scen = all_entries[u * K]
-        x = ft.encode(scen, n_steps=n_steps)
+        x = ft.encode_versioned(scen, n_steps=n_steps, version=feature_version)
         row: dict = {"scenario_index": u, "n_seeds_used": len(per_seed)}
         for j, name in enumerate(feat_names):
             row[name] = float(x[j])
@@ -250,6 +252,7 @@ def build_ensemble_dataset_from_h5(
     scenarios_path: Path,
     seeds_per_scenario: int,
     n_steps: int = ft.DEFAULT_N_STEPS,
+    feature_version: str = ft.DEFAULT_FEATURE_VERSION,
 ) -> pd.DataFrame:
     """Like :func:`build_ensemble_dataset` but reads from a compacted H5.
 
@@ -299,7 +302,7 @@ def build_ensemble_dataset_from_h5(
     print(f"[{mineral}] loaded {gp.shape[0]} trajectories x "
           f"{gp.shape[1]} steps")
 
-    feat_names = ft.feature_names(mineral)
+    feat_names = ft.feature_names_versioned(mineral, version=feature_version)
     rows: list[dict] = []
     n_dropped = 0
 
@@ -327,7 +330,7 @@ def build_ensemble_dataset_from_h5(
             continue
 
         scen = all_entries[u * K]
-        x = ft.encode(scen, n_steps=n_steps)
+        x = ft.encode_versioned(scen, n_steps=n_steps, version=feature_version)
         row: dict = {"scenario_index": u, "n_seeds_used": len(per_seed)}
         for j, name in enumerate(feat_names):
             row[name] = float(x[j])
@@ -374,10 +377,20 @@ def split_xy(
     For ensemble datasets (with ``<target>_mean`` / ``<target>_std``
     columns) use ``split_xy_ensemble`` instead.
     """
-    feat_names = ft.feature_names(mineral)
+    feat_names = ft.feature_names_versioned(mineral, version=detect_feature_version(df, mineral))
     X = df[feat_names].to_numpy(dtype=np.float32)
     Y = df[tg.TARGET_NAMES].to_numpy(dtype=np.float32)
     return X, Y, feat_names, list(tg.TARGET_NAMES)
+
+
+def detect_feature_version(df: pd.DataFrame, mineral: str) -> str:
+    """Look at columns and decide whether this parquet was built v1 or v2.
+
+    v2 adds ``country_<X>__has_embargo`` columns that v1 does not have.
+    """
+    probe_country = ft.COUNTRIES_BY_MINERAL[mineral][0]
+    sample_v2_col = f"country_{probe_country}__has_embargo"
+    return "v2" if sample_v2_col in df.columns else "v1"
 
 
 def split_xy_ensemble(
@@ -394,7 +407,7 @@ def split_xy_ensemble(
     where no seed recovered) survive here; downstream training code
     is responsible for masking those rows out.
     """
-    feat_names = ft.feature_names(mineral)
+    feat_names = ft.feature_names_versioned(mineral, version=detect_feature_version(df, mineral))
     X = df[feat_names].to_numpy(dtype=np.float32)
     Y_mean: dict[str, np.ndarray] = {}
     Y_std: dict[str, np.ndarray] = {}

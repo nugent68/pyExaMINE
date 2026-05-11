@@ -256,6 +256,7 @@ class TrajectoryMetrics:
 ARCH_DEEPONET: str = "deeponet"
 ARCH_DEEPONET_PHASE: str = "deeponet_phase"
 ARCH_HYBRID: str = "hybrid"
+ARCH_FNO: str = "fno"
 
 
 @dataclass
@@ -291,6 +292,10 @@ class MineralTrajectoryBundle:
     #: :class:`hybrid.HybridTrajectoryModel`.  Empty for non-hybrid
     #: bundles to keep the on-disk pickle compact.
     hybrid_config: dict = field(default_factory=dict)
+    #: Hyperparameter dict for the FNO model (only used when
+    #: ``arch == ARCH_FNO``).  Captures the kwargs needed by
+    #: :class:`fno.FNOTrajectoryModel`.
+    fno_config: dict = field(default_factory=dict)
 
     def is_phase(self) -> bool:
         return getattr(self, "arch", ARCH_DEEPONET) == ARCH_DEEPONET_PHASE
@@ -298,10 +303,16 @@ class MineralTrajectoryBundle:
     def is_hybrid(self) -> bool:
         return getattr(self, "arch", ARCH_DEEPONET) == ARCH_HYBRID
 
+    def is_fno(self) -> bool:
+        return getattr(self, "arch", ARCH_DEEPONET) == ARCH_FNO
+
     def build_model(self) -> nn.Module:
-        if self.is_hybrid():
+        if self.is_fno():
+            from .fno import FNOTrajectoryModel
+            m: nn.Module = FNOTrajectoryModel(**self.fno_config)
+        elif self.is_hybrid():
             from .hybrid import HybridTrajectoryModel
-            m: nn.Module = HybridTrajectoryModel(**self.hybrid_config)
+            m = HybridTrajectoryModel(**self.hybrid_config)
         elif self.is_phase():
             m = DeepONetPhase(
                 feature_dim=self.feature_dim,
@@ -336,14 +347,15 @@ class MineralTrajectoryBundle:
         return y_hat
 
 
-def save_bundle(bundle: MineralTrajectoryBundle, out_path: Path) -> None:
+def save_bundle(bundle: MineralTrajectoryBundle, out_path: Path | str) -> None:
+    out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("wb") as f:
         pickle.dump(bundle, f)
 
 
-def load_bundle(path: Path) -> MineralTrajectoryBundle:
-    with path.open("rb") as f:
+def load_bundle(path: Path | str) -> MineralTrajectoryBundle:
+    with Path(path).open("rb") as f:
         return pickle.load(f)
 
 

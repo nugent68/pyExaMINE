@@ -171,9 +171,10 @@ def _evaluate_mineral(
     # Phase bundles also need the per-scenario event timeline.
     X = np.stack([ft.encode(s, n_steps=bundle.n_steps).astype(np.float32)
                   for s in scenarios])
+    needs_scenarios = bundle.is_phase() or bundle.is_hybrid()
     preds = dn.predict_trajectory(
         bundle, X, device=device,
-        scenarios=scenarios if bundle.is_phase() else None,
+        scenarios=scenarios if needs_scenarios else None,
     )                                                          # (B, T)
     preds_list = [preds[i] for i in range(preds.shape[0])]
 

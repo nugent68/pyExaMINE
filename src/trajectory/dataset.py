@@ -199,6 +199,8 @@ class TrajectoryDataset(Dataset):
         verbose: bool = True,
         with_phase: bool = False,
         with_hybrid: bool = False,
+        with_fno: bool = False,
+        feature_version: str = ft.DEFAULT_FEATURE_VERSION,
     ) -> None:
         if not records:
             raise ValueError("TrajectoryDataset got zero records")
@@ -210,12 +212,18 @@ class TrajectoryDataset(Dataset):
         self._verbose = verbose
         self.with_phase = bool(with_phase)
         self.with_hybrid = bool(with_hybrid)
-        if self.with_phase and self.with_hybrid:
-            raise ValueError("with_phase and with_hybrid are mutually exclusive")
+        self.with_fno = bool(with_fno)
+        self.feature_version = str(feature_version)
+        if sum(int(b) for b in (self.with_phase, self.with_hybrid, self.with_fno)) > 1:
+            raise ValueError(
+                "with_phase, with_hybrid, with_fno are mutually exclusive"
+            )
 
         # Eagerly encode all scenario features (fast: ~ms per record).
         feats = np.stack([
-            ft.encode(r.scenario, n_steps=self.n_steps).astype(np.float32)
+            ft.encode_versioned(
+                r.scenario, n_steps=self.n_steps, version=self.feature_version,
+            ).astype(np.float32)
             for r in self.records
         ])
         self._features: torch.Tensor = torch.from_numpy(feats)
@@ -290,6 +298,9 @@ class TrajectoryDataset(Dataset):
     # ----- dataset interface -----
 
     def __len__(self) -> int:
+        if self.with_fno:
+            # FNO consumes whole trajectories: one item == one record.
+            return len(self.records)
         steps_per = self.subsample if self.subsample > 0 else self.n_steps
         return len(self.records) * steps_per
 
@@ -297,6 +308,14 @@ class TrajectoryDataset(Dataset):
         # Pure tensor indexing -- no fresh allocations on the hot path.
         # The per-batch collation (default torch.stack) is what actually
         # builds the (B, F) and (B,) tensors the model sees.
+        if self.with_fno:
+            # Whole-trajectory item: (features, full_targets).  The FNO
+            # model has its own internal time grid so we don't need to
+            # carry per-step t_norm.
+            return (
+                self._features[idx],
+                self._values[idx],                # (n_steps,)
+            )
         steps_per = self.subsample if self.subsample > 0 else self.n_steps
         rec_idx, in_rec = divmod(idx, steps_per)
         step = int(self._sampled_steps[rec_idx, in_rec])

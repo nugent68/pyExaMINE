@@ -318,3 +318,283 @@ def encode_batch(scenarios: Iterable[dict], n_steps: int = DEFAULT_N_STEPS) -> n
     if not rows:
         return np.empty((0, 0), dtype=np.float32)
     return np.stack(rows, axis=0)
+
+
+# ---------------------------------------------------------------------------
+# v2 encoder -- adds richer encodings of the same scenario inputs.
+#
+# Why v2: the v1 encoder uses K_MAX padded "slots" so the model has to learn
+# that "Chile embargo in slot 0" is equivalent to "Chile embargo in slot 2".
+# At 10x data scale that consolidation was apparently learned for headline
+# price targets (R^2 >= 0.95) but the trajectory model and the harder
+# scalars (recovery_time R^2 ~ 0.57-0.73) plateaued.  v2 makes the
+# consolidation explicit:
+#
+#   * per-country embargo summary (one column block per country)
+#   * per-chokepoint crisis summary (one column block per chokepoint)
+#   * event-interaction features (peak simultaneous coverage, total
+#     embargo+chokepoint overlap days, etc)
+#   * temporal-structure features (event-count, mean start, spread)
+#
+# v2 is strictly additive on top of v1 -- ``encode_v2`` returns
+# ``[encode_v1(s); extras(s)]``.  This keeps existing bundles loadable
+# (they ignore the new columns) and means we can A/B test v1 vs v2 by
+# rebuilding the parquet without changing the simulator at all.
+# ---------------------------------------------------------------------------
+
+#: Number of summary features emitted per country (embargo block) /
+#: per chokepoint (crisis block).
+_PER_COUNTRY_DIM: int = 5
+_PER_CHOKEPOINT_DIM: int = 5
+
+#: Number of cross-event interaction scalars.
+_INTERACTION_DIM: int = 6
+
+#: Number of temporal-structure scalars.
+_TEMPORAL_DIM: int = 4
+
+
+def _per_country_block(
+    embargoes: list[dict],
+    countries: list[str],
+    n_steps: int,
+) -> list[float]:
+    """5 features per country, totals across however many embargoes hit it."""
+    horizon = max(1, int(n_steps))
+    out: list[float] = []
+    for c in countries:
+        hits = [e for e in embargoes if e.get("country") == c]
+        if hits:
+            num = float(len(hits))
+            total_days_norm = sum(float(e["duration"]) for e in hits) / horizon
+            earliest_start_norm = (
+                min(float(e["start_step"]) for e in hits) / horizon
+            )
+            max_log_duration = max(
+                math.log1p(max(0.0, float(e["duration"]))) for e in hits
+            )
+            has = 1.0
+        else:
+            num = 0.0
+            total_days_norm = 0.0
+            earliest_start_norm = 0.0
+            max_log_duration = 0.0
+            has = 0.0
+        out.extend([has, num, total_days_norm,
+                    earliest_start_norm, max_log_duration])
+    return out
+
+
+def _per_chokepoint_block(
+    chokes: list[dict],
+    n_steps: int,
+) -> list[float]:
+    """5 features per chokepoint, totals across however many crises hit it."""
+    horizon = max(1, int(n_steps))
+    out: list[float] = []
+    for cp in CHOKEPOINTS:
+        hits = [c for c in chokes if c.get("chokepoint") == cp]
+        if hits:
+            num = float(len(hits))
+            total_days_norm = sum(float(c["duration"]) for c in hits) / horizon
+            earliest_start_norm = (
+                min(float(c["start_step"]) for c in hits) / horizon
+            )
+            max_log_duration = max(
+                math.log1p(max(0.0, float(c["duration"]))) for c in hits
+            )
+            has = 1.0
+        else:
+            has = 0.0
+            num = 0.0
+            total_days_norm = 0.0
+            earliest_start_norm = 0.0
+            max_log_duration = 0.0
+        out.extend([has, num, total_days_norm,
+                    earliest_start_norm, max_log_duration])
+    return out
+
+
+def _event_active_steps(events: list[dict]) -> np.ndarray:
+    """0/1 indicator of how many events are active at each simulation step.
+
+    Returns an ``(n_steps,)`` int array; sum across events of
+    ``[start, start+duration)`` overlap.
+    """
+    n = DEFAULT_N_STEPS
+    counts = np.zeros(n, dtype=np.int32)
+    for e in events:
+        s = int(e.get("start_step", 0))
+        d = int(e.get("duration", 0))
+        if d <= 0:
+            continue
+        a = max(0, s)
+        b = min(n, s + d)
+        if b > a:
+            counts[a:b] += 1
+    return counts
+
+
+def _interaction_block(
+    embargoes: list[dict],
+    chokes: list[dict],
+    n_steps: int,
+) -> list[float]:
+    """Cross-event statistics:
+
+    * total embargo coverage / horizon  (sum of durations, normalized)
+    * peak simultaneous embargoes
+    * total chokepoint coverage / horizon
+    * peak simultaneous chokepoints
+    * days with BOTH an active embargo AND an active chokepoint, normalized
+    * days with ANY event active, normalized
+    """
+    horizon = max(1, int(n_steps))
+    emb_active = _event_active_steps(embargoes)
+    cho_active = _event_active_steps(chokes)
+
+    total_emb_cov = float(sum(int(e.get("duration", 0)) for e in embargoes)) / horizon
+    total_cho_cov = float(sum(int(c.get("duration", 0)) for c in chokes)) / horizon
+    peak_emb = float(emb_active.max()) if emb_active.size else 0.0
+    peak_cho = float(cho_active.max()) if cho_active.size else 0.0
+    overlap_days = float(int(((emb_active > 0) & (cho_active > 0)).sum())) / horizon
+    any_active_days = float(int(((emb_active > 0) | (cho_active > 0)).sum())) / horizon
+
+    return [total_emb_cov, peak_emb, total_cho_cov, peak_cho,
+            overlap_days, any_active_days]
+
+
+def _temporal_block(
+    embargoes: list[dict],
+    chokes: list[dict],
+    n_steps: int,
+) -> list[float]:
+    """Temporal-structure scalars:
+
+    * number of embargoes (raw count)
+    * number of chokepoint crises (raw count)
+    * mean embargo start_step (normalized) -- 0 if none
+    * embargo start_step spread (max - min, normalized) -- 0 if 0/1 events
+    """
+    horizon = max(1, int(n_steps))
+    n_emb = float(len(embargoes))
+    n_cho = float(len(chokes))
+    if embargoes:
+        starts = [float(e["start_step"]) for e in embargoes]
+        mean_start = sum(starts) / len(starts) / horizon
+        spread = (max(starts) - min(starts)) / horizon if len(starts) > 1 else 0.0
+    else:
+        mean_start = 0.0
+        spread = 0.0
+    return [n_emb, n_cho, mean_start, spread]
+
+
+def _v2_extras_dim(mineral: str) -> int:
+    return (
+        len(COUNTRIES_BY_MINERAL[mineral]) * _PER_COUNTRY_DIM
+        + len(CHOKEPOINTS) * _PER_CHOKEPOINT_DIM
+        + _INTERACTION_DIM
+        + _TEMPORAL_DIM
+    )
+
+
+def feature_dim_v2(mineral: str) -> int:
+    return feature_dim(mineral) + _v2_extras_dim(mineral)
+
+
+def feature_names_v2(mineral: str) -> list[str]:
+    countries = COUNTRIES_BY_MINERAL[mineral]
+    names = list(feature_names(mineral))
+    for c in countries:
+        for tag in ("has_embargo", "n_embargoes", "total_days_norm",
+                    "earliest_start_norm", "max_log_duration"):
+            names.append(f"country_{c}__{tag}")
+    for cp in CHOKEPOINTS:
+        cp_slug = cp.replace(" ", "_")
+        for tag in ("has_crisis", "n_crises", "total_days_norm",
+                    "earliest_start_norm", "max_log_duration"):
+            names.append(f"chokepoint_{cp_slug}__{tag}")
+    for tag in ("total_emb_cov", "peak_emb", "total_cho_cov", "peak_cho",
+                "emb_cho_overlap_days_norm", "any_active_days_norm"):
+        names.append(f"interaction__{tag}")
+    for tag in ("n_emb", "n_cho", "mean_start_norm", "start_spread_norm"):
+        names.append(f"temporal__{tag}")
+    return names
+
+
+def encode_v2(scenario: dict, n_steps: int = DEFAULT_N_STEPS) -> np.ndarray:
+    """v1 encoder output concatenated with v2 extras (per-country,
+    per-chokepoint, interaction, temporal).  See module docstring.
+    """
+    base = encode(scenario, n_steps=n_steps)
+    mineral = scenario["mineral"]
+    countries = COUNTRIES_BY_MINERAL[mineral]
+
+    embargoes = sorted(
+        scenario.get("embargoes", []) or [],
+        key=lambda e: (int(e["start_step"]), str(e["country"])),
+    )
+    chokes = sorted(
+        scenario.get("chokepoint_crises", []) or [],
+        key=lambda c: (int(c["start_step"]), str(c["chokepoint"])),
+    )
+
+    extras: list[float] = []
+    extras.extend(_per_country_block(embargoes, countries, n_steps))
+    extras.extend(_per_chokepoint_block(chokes, n_steps))
+    extras.extend(_interaction_block(embargoes, chokes, n_steps))
+    extras.extend(_temporal_block(embargoes, chokes, n_steps))
+
+    return np.concatenate(
+        [base, np.asarray(extras, dtype=np.float32)],
+        axis=0,
+    )
+
+
+def encode_batch_v2(
+    scenarios: Iterable[dict],
+    n_steps: int = DEFAULT_N_STEPS,
+) -> np.ndarray:
+    rows = [encode_v2(s, n_steps=n_steps) for s in scenarios]
+    if not rows:
+        return np.empty((0, 0), dtype=np.float32)
+    return np.stack(rows, axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Version dispatch -- single entry point that selects v1 or v2 by name.
+# ---------------------------------------------------------------------------
+
+FEATURE_VERSIONS: tuple[str, ...] = ("v1", "v2")
+DEFAULT_FEATURE_VERSION: str = "v1"
+
+
+def encode_versioned(
+    scenario: dict,
+    n_steps: int = DEFAULT_N_STEPS,
+    version: str = DEFAULT_FEATURE_VERSION,
+) -> np.ndarray:
+    if version == "v1":
+        return encode(scenario, n_steps=n_steps)
+    if version == "v2":
+        return encode_v2(scenario, n_steps=n_steps)
+    raise ValueError(f"unknown feature version '{version}' "
+                     f"(known: {FEATURE_VERSIONS})")
+
+
+def feature_dim_versioned(mineral: str, version: str = DEFAULT_FEATURE_VERSION) -> int:
+    if version == "v1":
+        return feature_dim(mineral)
+    if version == "v2":
+        return feature_dim_v2(mineral)
+    raise ValueError(f"unknown feature version '{version}'")
+
+
+def feature_names_versioned(
+    mineral: str, version: str = DEFAULT_FEATURE_VERSION,
+) -> list[str]:
+    if version == "v1":
+        return feature_names(mineral)
+    if version == "v2":
+        return feature_names_v2(mineral)
+    raise ValueError(f"unknown feature version '{version}'")

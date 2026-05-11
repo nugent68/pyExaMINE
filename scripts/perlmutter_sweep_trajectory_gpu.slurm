@@ -27,7 +27,7 @@
 #   sbatch --export=ALL,EPOCHS=25,VARIANTS="default impulse_256x2" \
 #          scripts/perlmutter_sweep_trajectory_gpu.slurm
 #
-#SBATCH --image=docker:nugent68/pyexamine:175f086
+#SBATCH --image=docker:nugent68/pyexamine:b6be2ac
 #SBATCH --account=amsc001
 #SBATCH --constraint=gpu
 #SBATCH --qos=regular
@@ -45,14 +45,79 @@ set -euo pipefail
 : "${DATA_ROOT:=/pscratch/sd/n/nugent/pyExaMINE}"
 : "${EPOCHS:=50}"
 : "${SUBSAMPLE:=100}"
-: "${BATCH_SIZE:=1024}"
 : "${LR:=1e-3}"
-: "${OUT_SUBDIR:=trajectory_sweep_gpu}"
+: "${OUT_SUBDIR:=trajectory_sweep_gpu_10x}"
 : "${MINERALS:=lithium nickel platinum}"
+# BATCH_SIZE default is arch-dependent (see ARCH block below).
 
-# Variant list -- mirrors the keys of HYBRID_VARIANTS in
-# src/trajectory/hybrid.py.
-: "${VARIANTS:=default impulse_256x2 impulse_512x2 impulse_256x3 embed_32 embed_64 baseline_basis_128 all_larger}"
+# Sweep input source.  Default = 10x HDF5 corpus.  Override
+# SWEEP_SOURCE=csv (and optionally SWEEP_DATA / SWEEP_SCENARIOS) to
+# read the older per-CSV tree.
+#
+# SWEEP_DATA is the path *inside* the container (i.e. under /data).
+: "${SWEEP_SOURCE:=h5}"
+case "${SWEEP_SOURCE}" in
+    h5)
+        : "${SWEEP_DATA:=/data/surrogate_data/runs_h5_10x}"
+        : "${SWEEP_SCENARIOS:=/data/surrogate_data/scenarios}"
+        SWEEP_FLAG="--sweep-h5"
+        ;;
+    csv)
+        : "${SWEEP_DATA:=/data/surrogate_data/runs}"
+        : "${SWEEP_SCENARIOS:=/data/surrogate_data/scenarios}"
+        SWEEP_FLAG="--sweep-runs"
+        ;;
+    *)
+        echo "ERROR: SWEEP_SOURCE must be 'h5' or 'csv', got '${SWEEP_SOURCE}'" >&2
+        exit 1
+        ;;
+esac
+
+: "${CACHE_DIR:=/data/surrogate_data/trajectory_cache_h5_10x}"
+
+# Feature encoder version.  v1 = original padded-slot; v2 = + per-country
+# / per-chokepoint summaries + interaction terms.  Defaults to v1 (the
+# in-image baseline).
+: "${FEATURE_VERSION:=v1}"
+
+# Where the Python source actually lives at runtime.  Default = /app
+# (baked into the shifter image).  Override to /code_v2 to bind-mount a
+# pscratch checkout (lets us iterate on src/scripts without rebuilding
+# the container image).  If overridden, ${CODE_VOLUME_HOST} must point
+# at the host-side checkout to bind-mount.
+: "${CODE_ROOT:=/app}"
+: "${CODE_VOLUME_HOST:=}"
+
+# Architecture.  hybrid (default), fno, deeponet, deeponet_phase.
+: "${ARCH:=hybrid}"
+
+# Variant list.  For ARCH=hybrid these mirror HYBRID_VARIANTS in
+# src/trajectory/hybrid.py.  For ARCH=fno they mirror FNO_VARIANTS in
+# src/trajectory/fno.py.  ARCH=deeponet ignores variants (pass any
+# non-empty value, e.g. "default").
+case "${ARCH}" in
+    hybrid)
+        : "${VARIANTS:=default impulse_256x2 impulse_512x2 impulse_256x3 embed_32 embed_64 baseline_basis_128 all_larger}"
+        : "${BATCH_SIZE:=1024}"
+        ARCH_VARIANT_FLAG="--hybrid-variant"
+        ;;
+    fno)
+        : "${VARIANTS:=default wide_64 wide_96 modes_32 modes_64 deep_6 deep_8 wide_modes}"
+        # FNO consumes whole 1352-step trajectories per item; hybrid's
+        # default batch=1024 would OOM.  Default to 32 records / batch.
+        : "${BATCH_SIZE:=32}"
+        ARCH_VARIANT_FLAG="--fno-variant"
+        ;;
+    deeponet|deeponet_phase)
+        : "${VARIANTS:=default}"
+        : "${BATCH_SIZE:=1024}"
+        ARCH_VARIANT_FLAG=""
+        ;;
+    *)
+        echo "ERROR: ARCH must be hybrid|fno|deeponet|deeponet_phase, got '${ARCH}'" >&2
+        exit 1
+        ;;
+esac
 
 mkdir -p logs "${DATA_ROOT}/${OUT_SUBDIR}"
 
@@ -68,12 +133,26 @@ N_RUNS=${#RUN_LIST[@]}
 echo "=== pyExaMINE trajectory v3 architecture sweep (GPU) ==="
 echo "Job:           ${SLURM_JOB_ID:-N/A} on $(hostname)"
 echo "DATA_ROOT:     $DATA_ROOT"
+echo "Sweep source:  ${SWEEP_SOURCE} (${SWEEP_FLAG} ${SWEEP_DATA})"
+echo "Scenarios:     ${SWEEP_SCENARIOS}"
+echo "Cache:         ${CACHE_DIR}"
+echo "Code root:     ${CODE_ROOT}${CODE_VOLUME_HOST:+ (bind from ${CODE_VOLUME_HOST})}"
+echo "Arch:          ${ARCH}"
+echo "Feature ver:   ${FEATURE_VERSION}"
 echo "Out:           $DATA_ROOT/$OUT_SUBDIR/<mineral>_<variant>/"
 echo "Epochs:        $EPOCHS    Subsample: $SUBSAMPLE    Batch: $BATCH_SIZE"
 echo "Total runs:    $N_RUNS    (${SLURM_NTASKS} parallel tasks on ${SLURM_JOB_NUM_NODES} GPU nodes)"
 echo "Variants:      $VARIANTS"
 echo "Started:       $(date)"
 echo
+
+# Build the shifter volume arg list.  Always mounts DATA_ROOT;
+# optionally also bind-mounts a host-side code checkout if
+# CODE_VOLUME_HOST is set.
+SHIFTER_VOLUMES="--volume=${DATA_ROOT}:/data"
+if [ -n "${CODE_VOLUME_HOST}" ]; then
+    SHIFTER_VOLUMES="${SHIFTER_VOLUMES} --volume=${CODE_VOLUME_HOST}:${CODE_ROOT}"
+fi
 
 # Wrapper script: each SLURM_PROCID picks its (mineral, variant) and
 # runs one shifter + python on its assigned A100.
@@ -88,12 +167,12 @@ variant="\${pair##*:}"
 out_subdir="${OUT_SUBDIR}/\${mineral}_\${variant}"
 log="logs/traj_sweep_gpu_${SLURM_JOB_ID}_\${mineral}_\${variant}.log"
 echo "[\$(date +%T)] task \$SLURM_PROCID on \$(hostname) (CUDA_VISIBLE_DEVICES=\$CUDA_VISIBLE_DEVICES): \${mineral} / \${variant}" | tee "\$log"
-shifter --module=gpu --volume="${DATA_ROOT}:/data" \\
-    bash -c "cd /app && PYTHONUNBUFFERED=1 /app/.venv/bin/python -u scripts/train_trajectory.py \\
-        --sweep-runs /data/surrogate_data/runs \\
-        --sweep-scenarios /data/surrogate_data/scenarios \\
-        --arch hybrid \\
-        --hybrid-variant \${variant} \\
+shifter --module=gpu ${SHIFTER_VOLUMES} \\
+    bash -c "cd ${CODE_ROOT} && PYTHONUNBUFFERED=1 /app/.venv/bin/python -u scripts/train_trajectory.py \\
+        ${SWEEP_FLAG} ${SWEEP_DATA} \\
+        --sweep-scenarios ${SWEEP_SCENARIOS} \\
+        --arch ${ARCH} \\
+        ${ARCH_VARIANT_FLAG:+${ARCH_VARIANT_FLAG} \${variant}} \\
         --mineral \${mineral} \\
         --out /data/\${out_subdir} \\
         --epochs ${EPOCHS} \\
@@ -103,7 +182,8 @@ shifter --module=gpu --volume="${DATA_ROOT}:/data" \\
         --device cuda \\
         --num-workers 4 \\
         --persistent-workers \\
-        --cache-dir /data/trajectory_cache" 2>&1 | tee -a "\$log"
+        --feature-version ${FEATURE_VERSION} \\
+        --cache-dir ${CACHE_DIR}" 2>&1 | tee -a "\$log"
 WRAPPER_EOF
 chmod +x "$WRAPPER"
 

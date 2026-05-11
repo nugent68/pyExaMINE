@@ -49,6 +49,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--n-steps", type=int, default=ft.DEFAULT_N_STEPS,
                    help="Simulation horizon used to normalize start_step. "
                         "Must match what was used to sample scenarios.")
+    p.add_argument("--feature-version", choices=list(ft.FEATURE_VERSIONS),
+                   default=ft.DEFAULT_FEATURE_VERSION,
+                   help="Which feature encoder to use.  'v1' is the original "
+                        "padded-slot encoding; 'v2' adds per-country / "
+                        "per-chokepoint summaries + event interactions.")
     return p.parse_args()
 
 
@@ -74,8 +79,13 @@ def main() -> int:
     if args.runs is not None and args.runs_h5 is not None:
         raise SystemExit("--runs and --runs-h5 are mutually exclusive")
 
+    print(f"feature_version = {args.feature_version}")
     minerals = args.mineral or list(ft.COUNTRIES_BY_MINERAL)
-    summary: dict = {"seeds_per_scenario": seeds_per_scenario, "minerals": {}}
+    summary: dict = {
+        "seeds_per_scenario": seeds_per_scenario,
+        "feature_version": args.feature_version,
+        "minerals": {},
+    }
     for mineral in minerals:
         scen_path = args.scenarios / f"{mineral}.json"
         if not scen_path.is_file():
@@ -92,6 +102,7 @@ def main() -> int:
                     mineral, h5_path, scen_path,
                     seeds_per_scenario=seeds_per_scenario,
                     n_steps=args.n_steps,
+                    feature_version=args.feature_version,
                 )
             else:
                 raise SystemExit(
@@ -109,10 +120,12 @@ def main() -> int:
                     mineral, runs_dir, scen_path,
                     seeds_per_scenario=seeds_per_scenario,
                     n_steps=args.n_steps,
+                    feature_version=args.feature_version,
                 )
             else:
                 df = ds.build_mineral_dataset(
                     mineral, runs_dir, scen_path, n_steps=args.n_steps,
+                    feature_version=args.feature_version,
                 )
 
         if df.empty:
@@ -124,7 +137,8 @@ def main() -> int:
               f"{len(df.columns)} columns)")
         summary["minerals"][mineral] = {
             "n_rows": int(len(df)),
-            "feature_dim": ft.feature_dim(mineral),
+            "feature_dim": ft.feature_dim_versioned(mineral, version=args.feature_version),
+            "feature_version": args.feature_version,
             "target_names": list(tg.TARGET_NAMES),
             "parquet": str(out_path),
         }
