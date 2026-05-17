@@ -1,0 +1,30 @@
+{
+  "_comment": "Aggressive US policy mix: larger reserve, faster substitution trigger, faster mine expansion, hard procurement avoidance of embargoed origins, deep recycling ramp. Intended as one bookend of a sweep so the surrogate sees the full lever range.",
+
+  "strategic_reserve": {
+    "capacity_tons":              12000,
+    "initial_stock_tons":         12000,
+    "buy_below_price":            15000,
+    "release_above_price":        24000,
+    "release_on_embargo_of":      ["China"],
+    "buy_rate_tons_per_step":     100,
+    "release_rate_tons_per_step": 250
+  },
+
+  "procurement_avoid_countries":  ["China"],
+  "procurement_avoid_embargoed":  true,
+
+  "substitution_price_threshold":         20000,
+  "substitution_trigger_steps":           6,
+  "substitution_rate":                    0.08,
+  "max_substitution":                     0.50,
+
+  "mine_expansion_price_threshold":       1.4,
+  "mine_expansion_trigger_steps":         26,
+  "mine_capacity_growth_per_year_high":   0.25,
+
+  "retailer_reorder_point_multiplier":    8.0,
+  "retailer_order_quantity_multiplier":   5.0,
+
+  "recycling_capacity_ramp_per_year":     0.35
+}

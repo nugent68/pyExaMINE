@@ -1,0 +1,20 @@
+{
+  "_comment": "US lithium strategic reserve sized for a China embargo. capacity_tons ~30% of US annual Li demand (US ~13% of global ~150kt = 19.5kt/yr, so 6kt buffer). Buy below 2024 anchor; release on China embargo OR price > 1.7x anchor. Pre-stocked to capacity so the reserve can bite from day one of an embargo.",
+
+  "strategic_reserve": {
+    "capacity_tons":              6000,
+    "initial_stock_tons":         6000,
+    "buy_below_price":            14000,
+    "release_above_price":        28000,
+    "release_on_embargo_of":      ["China"],
+    "buy_rate_tons_per_step":     50,
+    "release_rate_tons_per_step": 150
+  },
+
+  "procurement_avoid_embargoed": true,
+
+  "retailer_reorder_point_multiplier": 6.0,
+  "retailer_order_quantity_multiplier": 4.0,
+
+  "recycling_capacity_ramp_per_year": 0.20
+}

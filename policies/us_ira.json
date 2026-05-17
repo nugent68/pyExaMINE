@@ -1,0 +1,22 @@
+{
+  "_comment": "US Inflation Reduction Act-style domestic Li premium. Models the §45X production credit + §30D consumer credit as a static +50% wedge on the Li price that US agents see, decoupling US substitution/utilisation decisions from the global spot. Combined with us_strategic_reserve-like buffers and embargo-aware procurement so the IRA wedge stays active during the China decoupling scenario.",
+
+  "price_spread": 0.50,
+
+  "strategic_reserve": {
+    "capacity_tons":              6000,
+    "initial_stock_tons":         6000,
+    "buy_below_price":            20000,
+    "release_above_price":        40000,
+    "release_on_embargo_of":      ["China"],
+    "buy_rate_tons_per_step":     50,
+    "release_rate_tons_per_step": 150
+  },
+
+  "procurement_avoid_embargoed": true,
+
+  "retailer_reorder_point_multiplier": 6.0,
+  "retailer_order_quantity_multiplier": 4.0,
+
+  "recycling_capacity_ramp_per_year": 0.20
+}
