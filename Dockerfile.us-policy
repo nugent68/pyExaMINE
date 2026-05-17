@@ -1,0 +1,19 @@
+# Layer the US-policy code changes on top of the published image.
+# Skips dependency install (already done in the base) so this builds
+# in seconds rather than ~25s for the full Dockerfile flow.
+#
+# Build:  docker build -f Dockerfile.us-policy -t pyexamine:us-policy .
+# Run:    docker run --rm -v $(pwd)/runs:/data pyexamine:us-policy \
+#             --mineral lithium --steps 500 --embargo China:312:156 \
+#             --us-policy /app/policies/us_strategic_reserve.json --no-viz
+FROM nugent68/pyexamine:latest
+
+USER app
+WORKDIR /app
+
+# Only the files this change touches. pyproject.toml / uv.lock are
+# unchanged so the base image's synced venv still works.
+COPY --chown=app:app src/ ./src/
+COPY --chown=app:app run_simulation.py ./
+COPY --chown=app:app policies/ ./policies/
+COPY --chown=app:app data/ ./data/
