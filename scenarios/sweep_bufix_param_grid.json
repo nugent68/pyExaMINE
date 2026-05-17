@@ -1,0 +1,7 @@
+{
+  "_comment": "Focused comparison sweep to test whether the buffer-fix (target_inventory now uses initial_mineral_intensity) flips the substitution paradox seen in stage2v2. Same 3 substitution knobs and 5 values per knob as stage2v2; anchored on us_aggressive's defaults. 13 cells x 5 embargo durations x 20 seeds = 1,300 scenarios.",
+
+  "substitution_trigger_steps":  {"values": [4, 6, 10, 26, 52], "baseline": 6},
+  "substitution_rate":           {"values": [0.04, 0.08, 0.12, 0.16, 0.24], "baseline": 0.08},
+  "max_substitution":            {"values": [0.20, 0.30, 0.50, 0.70, 0.90], "baseline": 0.50}
+}

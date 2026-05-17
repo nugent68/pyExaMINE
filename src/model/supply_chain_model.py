@@ -24,6 +24,11 @@ from ..agents.manufacturer_agent import ManufacturerAgent
 from ..agents.retailer_agent import RetailerAgent
 from ..agents.consumer_agent import ConsumerAgent
 from ..agents.recycling_agent import RecyclingAgent
+from ..agents.strategic_reserve_agent import StrategicReserveAgent
+
+from ..config.overrides import (
+    RECOGNISED_OVERRIDE_KEYS, validate_country_overrides, price_for,
+)
 
 from ..data.data_loader import load_mineral_data
 from ..data.routing import CHOKEPOINTS, select_route_or_fallback
@@ -131,6 +136,12 @@ class MineralSupplyChainModel(Model):
         self.mines = []
         self.recyclers = []
         self.processors = []
+        # Strategic-reserve agents sit between processors and
+        # manufacturers in the per-step tier order: build-purchases run
+        # after processors have produced; releases land in manufacturer
+        # input_inventory before the manufacturer step. Empty unless a
+        # country_overrides[<country>]["strategic_reserve"] block exists.
+        self.strategic_reserves = []
         self.manufacturers = []
         self.retailers = []
         self.consumers = []
@@ -171,6 +182,7 @@ class MineralSupplyChainModel(Model):
             self.mines,
             self.recyclers,
             self.processors,
+            self.strategic_reserves,
             self.manufacturers,
             self.retailers,
             self.consumers,
@@ -190,11 +202,20 @@ class MineralSupplyChainModel(Model):
         # any manufacturer entry that lists USA).
         self._country_gdp = data.get('country_gdp', {})
 
+        # Sanity-check any country_overrides leaf keys before agents
+        # read them at __init__. Catches typos up-front rather than
+        # silently no-opping a misnamed knob.
+        validate_country_overrides(self.config, RECOGNISED_OVERRIDE_KEYS)
+
         # Creation order matches the tier order; transport last because
         # downstream agents reference no transport-specific state at init.
         self._create_mines(data['mines'])
         self._create_recyclers(data['recyclers'])
         self._create_processors(data['processors'])
+        # Strategic reserves are opt-in via country_overrides; created
+        # here so they appear before manufacturers (which is also where
+        # they run in the per-step tier order).
+        self._create_strategic_reserves()
         self._create_manufacturers(data['manufacturer_countries'])
         self._create_retailers(data['consumer_countries'])
         self._create_consumers(data['consumer_countries'])
@@ -385,6 +406,44 @@ class MineralSupplyChainModel(Model):
             self.processors.append(processor)
         print(f"Created {len(self.processors)} processors across "
               f"{len({a.country for a in self.processors})} countries")
+
+    def _create_strategic_reserves(self):
+        """Instantiate strategic-reserve agents from country_overrides.
+
+        For each country whose override block contains a
+        ``"strategic_reserve"`` dict, create one StrategicReserveAgent.
+        The dict's keys map directly onto the agent's __init__ kwargs.
+        Missing keys raise a TypeError -- a strategic-reserve policy
+        must be fully specified or absent (we don't ship "safe"
+        defaults because the right capacity / price thresholds depend
+        on the mineral).
+        """
+        overrides = self.config.get("country_overrides", {})
+        for country, country_cfg in overrides.items():
+            if not isinstance(country_cfg, dict):
+                continue
+            spec = country_cfg.get("strategic_reserve")
+            if not spec:
+                continue
+            reserve = StrategicReserveAgent(
+                unique_id=self.next_id(),
+                model=self,
+                country=country,
+                capacity_tons=spec["capacity_tons"],
+                buy_below_price=spec["buy_below_price"],
+                release_above_price=spec["release_above_price"],
+                release_on_embargo_of=spec.get("release_on_embargo_of", []),
+                buy_rate_tons_per_step=spec["buy_rate_tons_per_step"],
+                release_rate_tons_per_step=spec["release_rate_tons_per_step"],
+                initial_stock_tons=spec.get("initial_stock_tons", 0.0),
+            )
+            self.strategic_reserves.append(reserve)
+        if self.strategic_reserves:
+            countries = ", ".join(r.country for r in self.strategic_reserves)
+            print(
+                f"Created {len(self.strategic_reserves)} strategic reserve "
+                f"agent(s) in: {countries}"
+            )
 
     def _create_manufacturers(self, country_shares):
         """Create per-country manufacturer agents, fanned out by GDP.
@@ -959,6 +1018,8 @@ class MineralSupplyChainModel(Model):
         total += self.available_eol_pool + sum(self.end_of_life_pool.values())
         for rec in self.recyclers:
             total += rec.storage + rec.recovered_pool
+        for sr in self.strategic_reserves:
+            total += sr.reserve
         return total
 
     def mass_balance_discrepancy(self, total_mineral=None):
@@ -1023,6 +1084,24 @@ class MineralSupplyChainModel(Model):
         self._cached_transit_product_units = product_units
 
     def _setup_data_collector(self):
+        # Per-country regional-price reporters for any country with a
+        # non-zero price_spread. Built before the DataCollector
+        # constructor so Mesa internalises them at init time (adding
+        # to model_reporters post-construction doesn't fully wire
+        # through Mesa's per-step capture).
+        regional_price_reporters = {}
+        overrides = self.config.get("country_overrides", {})
+        for country, ccfg in overrides.items():
+            if not isinstance(ccfg, dict):
+                continue
+            spread = ccfg.get("price_spread", 0.0)
+            if spread is None or float(spread) == 0.0:
+                continue
+            # Late-binding closure trap: capture country via default arg.
+            regional_price_reporters[f"Price_{country}"] = (
+                lambda m, c=country: price_for(m, c)
+            )
+
         self.datacollector = DataCollector(
             model_reporters={
                 "Step": lambda m: m.current_step,
@@ -1087,6 +1166,24 @@ class MineralSupplyChainModel(Model):
                 "Total_In_Transit_Tons": lambda m: m._cached_transit_tons,
                 # Product-unit shipments in transit (manufacturer -> retailer).
                 "Total_Product_Units_In_Transit": lambda m: m._cached_transit_product_units,
+                # Strategic reserve diagnostics. Sum across all reserve
+                # agents (currently one per opted-in country). When no
+                # reserve is configured these read zero -- backwards-
+                # compatible with the default config.
+                "Strategic_Reserve_Stock": lambda m: sum(
+                    r.reserve for r in m.strategic_reserves
+                ),
+                "Strategic_Reserve_Bought": lambda m: sum(
+                    r.bought_this_step for r in m.strategic_reserves
+                ),
+                "Strategic_Reserve_Released": lambda m: sum(
+                    r.released_this_step for r in m.strategic_reserves
+                ),
+                # Merge in the per-country regional-price reporters
+                # collected above. Empty dict when no country has a
+                # non-zero price_spread, so no extra columns appear
+                # in the default backwards-compat case.
+                **regional_price_reporters,
             }
         )
 

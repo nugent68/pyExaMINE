@@ -1,0 +1,3 @@
+{
+  "_comment": "Empty US policy. Loading this file should produce results bit-identical to running with no --us-policy flag, since cfg_for falls through to the global config when a key is absent. Useful as the control arm of a policy A/B."
+}

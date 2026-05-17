@@ -5,6 +5,8 @@ Behavior: Produces if profitable, subject to disruptions and embargoes.
 
 from mesa import Agent
 
+from ..config.overrides import cfg_for, price_for
+
 
 class MineAgent(Agent):
     """Agent representing a mine that extracts raw minerals."""
@@ -122,38 +124,61 @@ class MineAgent(Agent):
         # immutable post-construction so reading once per agent at init
         # saves a per-step dict.get for each of these knobs across every
         # mine. Names mirror the original config keys for clarity.
-        cfg = model.config
-        self._cfg_steps_per_year = int(cfg.get("steps_per_year", 52))
-        self._cfg_cap_growth_base = float(cfg.get("mine_capacity_growth_per_year", 0.0))
+        # cfg_for consults country_overrides[self.country] first so US-
+        # specific policy values land on US mines only.
+        c = self.country
+        self._cfg_steps_per_year = int(cfg_for(model, c, "steps_per_year", 52))
+        self._cfg_cap_growth_base = float(
+            cfg_for(model, c, "mine_capacity_growth_per_year", 0.0)
+        )
         self._cfg_cap_growth_high = float(
-            cfg.get("mine_capacity_growth_per_year_high", self._cfg_cap_growth_base)
+            cfg_for(model, c, "mine_capacity_growth_per_year_high",
+                    self._cfg_cap_growth_base)
         )
         self._cfg_expansion_threshold_mult = float(
-            cfg.get("mine_expansion_price_threshold", 2.0)
+            cfg_for(model, c, "mine_expansion_price_threshold", 2.0)
         )
         self._cfg_expansion_trigger_steps = int(
-            cfg.get("mine_expansion_trigger_steps", 52)
+            cfg_for(model, c, "mine_expansion_trigger_steps", 52)
         )
         self._cfg_disruption_probability = float(
-            cfg.get("mine_disruption_probability", 0.02)
+            cfg_for(model, c, "mine_disruption_probability", 0.02)
         )
-        self._cfg_disruption_duration_min = int(cfg.get("disruption_duration_min", 3))
-        self._cfg_disruption_duration_max = int(cfg.get("disruption_duration_max", 5))
-        self._cfg_restart_margin = float(cfg.get("mine_restart_margin", 1.2))
-        self._cfg_cold_restart_lag = int(cfg.get("mine_restart_lag_steps", 26))
-        self._cfg_warm_restart_lag = int(cfg.get("mine_warm_restart_lag_steps", 12))
-        self._cfg_warm_window = int(cfg.get("mine_warm_restart_window_steps", 52))
-        self._cfg_mothball_trigger_steps = int(cfg.get("mothball_trigger_steps", 13))
-        self._cfg_cash_cost_fraction = float(cfg.get("mine_cash_cost_fraction", 0.65))
-        self._cfg_reserve_replacement_rate = float(cfg.get("reserve_replacement_rate", 0.0))
+        self._cfg_disruption_duration_min = int(
+            cfg_for(model, c, "disruption_duration_min", 3)
+        )
+        self._cfg_disruption_duration_max = int(
+            cfg_for(model, c, "disruption_duration_max", 5)
+        )
+        self._cfg_restart_margin = float(cfg_for(model, c, "mine_restart_margin", 1.2))
+        self._cfg_cold_restart_lag = int(cfg_for(model, c, "mine_restart_lag_steps", 26))
+        self._cfg_warm_restart_lag = int(
+            cfg_for(model, c, "mine_warm_restart_lag_steps", 12)
+        )
+        self._cfg_warm_window = int(
+            cfg_for(model, c, "mine_warm_restart_window_steps", 52)
+        )
+        self._cfg_mothball_trigger_steps = int(
+            cfg_for(model, c, "mothball_trigger_steps", 13)
+        )
+        self._cfg_cash_cost_fraction = float(
+            cfg_for(model, c, "mine_cash_cost_fraction", 0.65)
+        )
+        self._cfg_reserve_replacement_rate = float(
+            cfg_for(model, c, "reserve_replacement_rate", 0.0)
+        )
         self._cfg_post_embargo_release_steps = max(
-            1, int(cfg.get("post_embargo_release_steps", 26))
+            1, int(cfg_for(model, c, "post_embargo_release_steps", 26))
         )
         # Utilization curve knobs.
-        self._cfg_util_baseline = float(cfg.get("mine_baseline_utilization", 0.75))
-        self._cfg_util_min = float(cfg.get("mine_min_utilization", 0.5))
-        self._cfg_util_max = float(cfg.get("mine_max_utilization", 1.0))
-        self._cfg_util_ratio_max = float(cfg.get("mine_max_utilization_ratio", 2.5))
+        self._cfg_util_baseline = float(
+            cfg_for(model, c, "mine_baseline_utilization", 0.75)
+        )
+        self._cfg_util_min = float(cfg_for(model, c, "mine_min_utilization", 0.5))
+        self._cfg_util_max = float(cfg_for(model, c, "mine_max_utilization", 1.0))
+        self._cfg_util_ratio_max = float(
+            cfg_for(model, c, "mine_max_utilization_ratio", 2.5)
+        )
 
     @property
     def operational(self):
@@ -177,7 +202,11 @@ class MineAgent(Agent):
         #    flips the per-step rate from baseline to "high". Reverts to
         #    baseline when the counter relaxes; already-built capacity
         #    stays (you don't unbuild a shaft).
-        price = self.model.current_price
+        # Regional price: in a config with no price_spread override
+        # this is the global current_price (backwards-compat). With a
+        # country override it's the multiplier-adjusted regional price
+        # the mine actually receives for its ore.
+        price = price_for(self.model, self.country)
         if (self.extraction_cost > 0
                 and price > self.extraction_cost * self._cfg_expansion_threshold_mult):
             self.high_price_capex_counter += 1
@@ -265,7 +294,7 @@ class MineAgent(Agent):
         #   - Restart aborts if price falls back below the threshold
         #     during the lag.
         cash_cost = self.extraction_cost * self._cfg_cash_cost_fraction
-        price = self.model.current_price
+        price = price_for(self.model, self.country)
 
         if self.mothballed:
             if price > self.extraction_cost * self._cfg_restart_margin:
@@ -372,7 +401,7 @@ class MineAgent(Agent):
             # Pathological config -- pin to baseline so we don't divide by 0.
             return 1.0
 
-        ratio = self.model.current_price / self.extraction_cost
+        ratio = price_for(self.model, self.country) / self.extraction_cost
         umin = self._cfg_util_min
         umax = self._cfg_util_max
         ratio_max = self._cfg_util_ratio_max

@@ -1,0 +1,7 @@
+{
+  "_comment": "Stage 3: 3D full-factorial scan of the two substitution knobs against price_spread, anchored on policies/us_aggressive.json. 4 x 4 x 5 = 80 cells x 20 embargo durations x 20 seeds = 32,000 scenarios. The grid is centred on Stage 2 v2's actual baseline values (us_aggressive.json sets substitution_trigger_steps=6 and max_substitution=0.50; price_spread defaults to 0). The substitution grids drop one mid-value each from the Stage 2 v2 5-level grid to keep total compute under the 30-min debug-QoS cap while preserving both extremes -- those are the policy-discriminating values from the Stage 2 v2 ranking (max_substitution -34% at 0.20, substitution_trigger_steps -40% at 52 wk).",
+
+  "substitution_trigger_steps": {"values": [6, 10, 26, 52],            "baseline": 6},
+  "max_substitution":           {"values": [0.20, 0.30, 0.50, 0.90],    "baseline": 0.50},
+  "price_spread":               {"values": [0.0, 0.25, 0.50, 0.75, 1.0], "baseline": 0.0}
+}

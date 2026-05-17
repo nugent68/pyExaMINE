@@ -127,6 +127,23 @@ def main() -> int:
     if scenario.get("chokepoint_crises"):
         cfg["chokepoint_crises"] = list(scenario["chokepoint_crises"])
 
+    # Per-country policy overrides. A scenario can carry an explicit
+    # ``country_overrides`` block (merged into the base config dict so
+    # multiple scenarios in one JSON can share a baseline policy while
+    # overriding specific countries) or a convenience ``us_policy``
+    # shortcut that gets installed under country_overrides["USA"]. The
+    # second form mirrors the run_simulation.py --us-policy flag so
+    # scenario JSON and CLI runs use the same policy schema.
+    co = scenario.get("country_overrides")
+    us_policy = scenario.get("us_policy")
+    if co or us_policy:
+        merged = dict(cfg.get("country_overrides", {}) or {})
+        if co:
+            merged.update(co)
+        if us_policy is not None:
+            merged["USA"] = us_policy
+        cfg["country_overrides"] = merged
+
     t0 = time.time()
     model = MineralSupplyChainModel(cfg)
     model.run_model(cfg["n_steps"])

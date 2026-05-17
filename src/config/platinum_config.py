@@ -134,4 +134,8 @@ PLATINUM_CONFIG = {
     "n_steps": 200,
     "random_seed": 42,
     "steps_per_year": 52,
+
+    # Per-country heuristic overrides; see lithium_config.py for the
+    # full set of supported keys. Empty by default.
+    "country_overrides": {},
 }

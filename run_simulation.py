@@ -5,6 +5,7 @@ Usage: python run_simulation.py --mineral lithium --steps 200
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -91,6 +92,23 @@ def parse_arguments():
             '(e.g., "Chile:624:52" -> Chile withholds exports starting step '
             '624 for 52 steps). May be repeated for multiple embargoes. '
             'Country must match the country column in data/{mineral}_mines.csv.'
+        ),
+    )
+
+    parser.add_argument(
+        '--us-policy',
+        type=str,
+        default=None,
+        metavar='PATH',
+        help=(
+            'Path to a JSON file of US policy parameters. Loaded into '
+            'config["country_overrides"]["USA"] and consulted at agent '
+            'init for any key in src/config/overrides.py. Supports '
+            'scalar agent knobs (e.g. retailer_reorder_point_multiplier), '
+            'a "strategic_reserve" block to instantiate a US '
+            'StrategicReserveAgent, and "procurement_avoid_countries" / '
+            '"procurement_avoid_embargoed" to gate US buyers. Example '
+            'policy files live in policies/*.json.'
         ),
     )
 
@@ -206,9 +224,24 @@ def _parse_chokepoint_specs(specs):
     return parsed
 
 
+def _load_us_policy(path):
+    """Read a US policy JSON file (or return None if path is empty)."""
+    if not path:
+        return None
+    with open(path, 'r') as f:
+        policy = json.load(f)
+    if not isinstance(policy, dict):
+        raise ValueError(
+            f"US policy file '{path}' must contain a JSON object at the "
+            f"top level (got {type(policy).__name__})."
+        )
+    return policy
+
+
 def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
                        output_dir='outputs', generate_viz=True,
-                       embargoes=None, chokepoint_crises=None):
+                       embargoes=None, chokepoint_crises=None,
+                       us_policy=None):
     """Run simulation for a single mineral.
 
     Args:
@@ -243,6 +276,15 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
         config['political_embargoes'] = list(config.get('political_embargoes', [])) + list(embargoes)
     if chokepoint_crises:
         config['chokepoint_crises'] = list(config.get('chokepoint_crises', [])) + list(chokepoint_crises)
+    if us_policy is not None:
+        # Patch the per-country override block. We copy the parent dict
+        # because get_config() returned a shared module-level constant
+        # and config.copy() above is shallow -- mutating
+        # country_overrides in place would persist across runs.
+        country_overrides = dict(config.get('country_overrides', {}))
+        country_overrides['USA'] = us_policy
+        config['country_overrides'] = country_overrides
+        print(f"  US policy: {len(us_policy)} override key(s) applied")
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -283,7 +325,8 @@ def run_single_mineral(mineral_name, n_steps=None, geo_prob=None, seed=None,
 
 def run_all_minerals(n_steps=None, geo_prob=None, seed=None,
                      output_dir='outputs', generate_viz=True,
-                     embargoes=None, chokepoint_crises=None):
+                     embargoes=None, chokepoint_crises=None,
+                     us_policy=None):
     """Run simulations for all three minerals.
 
     Args:
@@ -311,6 +354,7 @@ def run_all_minerals(n_steps=None, geo_prob=None, seed=None,
             mineral, n_steps, geo_prob, seed, output_dir, generate_viz,
             embargoes=embargoes,
             chokepoint_crises=chokepoint_crises,
+            us_policy=us_policy,
         )
     
     print(f"\n{'='*70}")
@@ -338,10 +382,13 @@ def main():
     
     embargoes = _parse_embargo_specs(args.embargo)
     chokepoint_crises = _parse_chokepoint_specs(args.chokepoint_crisis)
+    us_policy = _load_us_policy(args.us_policy)
     if embargoes:
         print(f"  Embargoes: {embargoes}")
     if chokepoint_crises:
         print(f"  Chokepoint crises: {chokepoint_crises}")
+    if us_policy is not None:
+        print(f"  US policy file: {args.us_policy}")
 
     try:
         if args.all:
@@ -353,6 +400,7 @@ def main():
                 generate_viz=not args.no_viz,
                 embargoes=embargoes,
                 chokepoint_crises=chokepoint_crises,
+                us_policy=us_policy,
             )
         else:
             run_single_mineral(
@@ -364,6 +412,7 @@ def main():
                 generate_viz=not args.no_viz,
                 embargoes=embargoes,
                 chokepoint_crises=chokepoint_crises,
+                us_policy=us_policy,
             )
         
         print("\n✓ Simulation successful!")

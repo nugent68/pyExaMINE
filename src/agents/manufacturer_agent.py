@@ -5,6 +5,8 @@ Implements substitution investment when prices remain high.
 
 from mesa import Agent
 
+from ..config.overrides import cfg_for, price_for, procurement_avoid_list
+
 
 class ManufacturerAgent(Agent):
     """Agent representing a manufacturer that uses minerals to produce goods."""
@@ -48,8 +50,8 @@ class ManufacturerAgent(Agent):
         # with tons -- it overshot by 1/mineral_intensity (~12x for Li,
         # ~20,000x for Pt). Recompute live so substitution shrinks the
         # target as intensity falls.
-        self.target_inventory_weeks = self.model.config.get(
-            "manufacturer_target_inventory_weeks", 4
+        self.target_inventory_weeks = cfg_for(
+            model, country, "manufacturer_target_inventory_weeks", 4
         )
 
         # Substitution tracking. Two sticky counters: high_price_counter
@@ -83,23 +85,33 @@ class ManufacturerAgent(Agent):
 
         # Cache config values referenced from step() / helpers (config
         # is immutable post-construction).
-        cfg = model.config
+        c = country
         self._cfg_substitution_threshold = float(
-            cfg.get("substitution_price_threshold", model.initial_price * 1.5)
+            cfg_for(model, c, "substitution_price_threshold",
+                    model.initial_price * 1.5)
         )
         self._cfg_substitution_revert_threshold = float(
-            cfg.get("substitution_revert_threshold", model.initial_price * 0.667)
+            cfg_for(model, c, "substitution_revert_threshold",
+                    model.initial_price * 0.667)
         )
         self._cfg_substitution_trigger_steps = int(
-            cfg.get("substitution_trigger_steps", 10)
+            cfg_for(model, c, "substitution_trigger_steps", 10)
         )
         self._cfg_substitution_revert_trigger_steps = int(
-            cfg.get("substitution_revert_trigger_steps", 26)
+            cfg_for(model, c, "substitution_revert_trigger_steps", 26)
         )
-        self._cfg_substitution_rate = float(cfg.get("substitution_rate", 0.05))
-        self._cfg_substitution_revert_rate = float(cfg.get("substitution_revert_rate", 0.03))
-        self._cfg_max_substitution = float(cfg.get("max_substitution", 0.30))
-        self._cfg_order_rate = float(cfg.get("manufacturer_order_rate", 0.5))
+        self._cfg_substitution_rate = float(
+            cfg_for(model, c, "substitution_rate", 0.05)
+        )
+        self._cfg_substitution_revert_rate = float(
+            cfg_for(model, c, "substitution_revert_rate", 0.03)
+        )
+        self._cfg_max_substitution = float(
+            cfg_for(model, c, "max_substitution", 0.30)
+        )
+        self._cfg_order_rate = float(
+            cfg_for(model, c, "manufacturer_order_rate", 0.5)
+        )
 
     @property
     def effective_capacity(self):
@@ -116,11 +128,28 @@ class ManufacturerAgent(Agent):
 
     @property
     def target_inventory(self):
-        """Target input inventory in MINERAL TONS."""
+        """Target input inventory in MINERAL TONS.
+
+        Uses ``initial_mineral_intensity`` (the as-designed Li-per-product
+        amount) rather than the *current* substituted-down intensity so
+        the manufacturer's input buffer stays sized to the original
+        production footprint regardless of any substitution that has
+        happened in-flight. Real-world manufacturers that switch to a
+        lower-Li chemistry (e.g. NMC -> LFP) do not materially shrink
+        their precursor warehouses; they re-purpose the same physical
+        buffer for a different precursor. Coupling the buffer to the
+        post-substitution intensity caused a counterintuitive policy
+        result in the Stage 2 v2 sweep where aggressive substitution
+        increased cumulative unfulfilled demand, because the smaller
+        buffer left manufacturers more vulnerable to subsequent supply
+        pinches. Production (in _produce_goods) still uses the
+        post-substitution ``mineral_intensity`` so the per-product
+        Li savings remain in effect.
+        """
         return (
             self.effective_capacity
             * self.target_inventory_weeks
-            * self.mineral_intensity
+            * self.initial_mineral_intensity
         )
 
     def step(self):
@@ -155,8 +184,14 @@ class ManufacturerAgent(Agent):
         either action -- only sustained pressure (or sustained relief)
         does. The two thresholds form a dead zone (default ~0.67x to
         1.5x of initial price) inside which both counters decay.
+
+        Uses the regional ``price_for(country)`` so a country with a
+        ``price_spread`` override sees a wedged price -- US under IRA
+        sees a higher price and substitutes earlier, while non-IRA
+        manufacturers respond to the unmultiplied global price. With
+        no spread the result is identical to the global current_price.
         """
-        price = self.model.current_price
+        price = price_for(self.model, self.country)
         if price > self._cfg_substitution_threshold:
             self.high_price_counter += 1
             self.low_price_counter = max(0, self.low_price_counter - 1)
@@ -234,6 +269,15 @@ class ManufacturerAgent(Agent):
         order_amount = minerals_needed * self._cfg_order_rate
 
         processors = list(self.model.processors)
+        # Procurement-avoid filter: drop processors in countries this
+        # manufacturer's policy refuses to source from (empty by
+        # default; populated for US manufacturers when a policy file
+        # is loaded).
+        avoid = procurement_avoid_list(self.model, self.country)
+        if avoid:
+            processors = [p for p in processors if p.country not in avoid]
+            if not processors:
+                return
         self.model.random_state.shuffle(processors)
 
         for processor in processors:

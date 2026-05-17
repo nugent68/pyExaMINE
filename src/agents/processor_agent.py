@@ -5,6 +5,8 @@ Maintains inventory and sells to manufacturers.
 
 from mesa import Agent
 
+from ..config.overrides import cfg_for, procurement_avoid_list
+
 
 class ProcessorAgent(Agent):
     """Agent representing a processing facility that converts ore to pure mineral."""
@@ -54,7 +56,7 @@ class ProcessorAgent(Agent):
 
         # Safety stock (don't sell below this level), in PROCESSED tonnes.
         # N weeks of *output* capacity.
-        safety_weeks = self.model.config.get("processor_safety_stock_weeks", 2.0)
+        safety_weeks = cfg_for(model, country, "processor_safety_stock_weeks", 2.0)
         self.safety_stock = self.output_capacity * safety_weeks
 
         # Inventory ceiling: stop purchasing ore once expected post-
@@ -62,7 +64,7 @@ class ProcessorAgent(Agent):
         # of output capacity. Without this, processors buy and process
         # indefinitely when downstream demand collapses, masking the
         # supply/demand price signal and producing unbounded inventory.
-        cap_weeks = self.model.config.get("processor_inventory_cap_weeks", 8.0)
+        cap_weeks = cfg_for(model, country, "processor_inventory_cap_weeks", 8.0)
         self.inventory_cap = self.output_capacity * cap_weeks
 
         # Tracking
@@ -90,10 +92,9 @@ class ProcessorAgent(Agent):
         self._inbound_count = {}   # material -> count of in-flight shipments
 
         # Cache config values used in step() (immutable post-init).
-        cfg = self.model.config
-        self._cfg_steps_per_year = int(cfg.get("steps_per_year", 52))
+        self._cfg_steps_per_year = int(cfg_for(model, country, "steps_per_year", 52))
         self._cfg_capacity_growth_per_year = float(
-            cfg.get("processor_capacity_growth_per_year", 0.0)
+            cfg_for(model, country, "processor_capacity_growth_per_year", 0.0)
         )
 
     def step(self):
@@ -146,6 +147,18 @@ class ProcessorAgent(Agent):
         ranked_mines = self.model.mines_sorted_by_cost
         if not ranked_mines:
             return
+
+        # Procurement-avoid filter. If this processor's country has a
+        # policy override that forbids buying from listed (or currently
+        # embargoed) origins, drop those mines from the merit order.
+        # Empty when no override is set, so default behaviour is
+        # unchanged. Computed once per step here -- the avoid list is
+        # short and the membership check below is O(1).
+        avoid = procurement_avoid_list(self.model, self.country)
+        if avoid:
+            ranked_mines = [m for m in ranked_mines if m.country not in avoid]
+            if not ranked_mines:
+                return
 
         in_transit = self._inbound_qty.get('ore', 0.0)
 

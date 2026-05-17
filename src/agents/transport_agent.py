@@ -8,6 +8,8 @@ zero-lead-time).
 
 from mesa import Agent
 
+from ..config.overrides import cfg_for
+
 
 class TransportAgent(Agent):
     """Agent representing a transport service that moves materials with delays."""
@@ -64,7 +66,7 @@ class TransportAgent(Agent):
         # Cache config value referenced inside _deliver_shipments
         # (config is immutable post-construction).
         self._cfg_max_deferral_steps = int(
-            model.config.get("transport_max_deferral_steps", 26)
+            cfg_for(model, country, "transport_max_deferral_steps", 26)
         )
 
     @staticmethod

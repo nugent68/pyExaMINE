@@ -1,0 +1,140 @@
+# syntax=docker/dockerfile:1
+#
+# pyExaMINE -- podman-hpc / Perlmutter MPI variant.
+#
+# Built on Perlmutter login node with `podman-hpc build`. Layered on
+# top of the existing us-policy-bufix image (which already has all
+# Python deps + the bufix change to manufacturer_agent.target_inventory).
+# Adds MPICH 4.0.2 + HDF5 1.14 parallel + h5py-mpi, with install
+# layout matching NERSC's reference mpi4py:3.1.3 image so the
+# podman-hpc --mpi flag's Cray-MPICH substitution fires correctly at
+# runtime on Perlmutter compute nodes.
+#
+# Build:
+#   ssh perlmutter
+#   cd /pscratch/sd/n/nugent/pyexamine
+#   podman-hpc build -f Containerfile.podman-mpi -t pyexamine:mpi-podman .
+#   podman-hpc migrate pyexamine:mpi-podman
+#
+# Run (inside slurm):
+#   srun -n N podman-hpc run --rm --mpi --entrypoint= \
+#       -v $RUNDIR:/data -v $REPO:/work:ro \
+#       pyexamine:mpi-podman \
+#       /app/.venv/bin/python /work/scripts/run_sweep_mpi.py ...
+#
+# Why MPICH 4.0.2 (not 3.4.3 like our prior Shifter attempt):
+#   - Matches the working NERSC reference image
+#     registry.nersc.gov/library/nersc/mpi4py:3.1.3 (also 4.0.2 ch4:ofi)
+#   - Cray-MPICH 8.x on Perlmutter is ABI-compatible with MPICH 4.x
+#   - The prior 3.4.3 build at /opt/mpich failed PMI handshake under
+#     Slurm's pmi2 plug-in. NERSC's docs specifically recommend the
+#     same MPICH version as their reference base.
+FROM docker.io/nugent68/pyexamine:us-policy-bufix
+
+USER root
+# Build deps; we deliberately do NOT install libfabric-dev (MPICH's
+# bundled libfabric handles the ch4:ofi build inside the container --
+# at runtime, --mpi swaps in Cray's libmpich which uses Cray's
+# libfabric for Slingshot, so the in-container libfabric is only used
+# during compile).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        wget gfortran build-essential pkg-config ca-certificates \
+        zlib1g-dev libsz2 libaec-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1. MPICH 4.0.2 with ch4:ofi + embedded libfabric -> /usr/local.
+#    Same install layout as NERSC's mpi4py:3.1.3 reference base,
+#    so podman-hpc --mpi knows where to swap in Cray-MPICH at runtime.
+ARG MPICH_VERSION=4.0.2
+RUN cd /tmp \
+    && wget -q https://www.mpich.org/static/downloads/${MPICH_VERSION}/mpich-${MPICH_VERSION}.tar.gz \
+    && tar xzf mpich-${MPICH_VERSION}.tar.gz \
+    && cd mpich-${MPICH_VERSION} \
+    && ./configure \
+        --prefix=/usr/local \
+        --with-device=ch4:ofi \
+        --with-libfabric=embedded \
+        --enable-fast=O3 \
+        --disable-fortran \
+        --enable-threads=multiple \
+        --enable-shared \
+        --enable-error-checking=no \
+    2>&1 | tail -5 \
+    && make -j "$(nproc)" 2>&1 | tail -5 \
+    && make install 2>&1 | tail -2 \
+    && ldconfig \
+    && cd / && rm -rf /tmp/mpich-${MPICH_VERSION}*
+
+# 2. HDF5 1.14.3 with --enable-parallel -> /usr/local.
+ARG HDF5_MAJOR=1.14
+ARG HDF5_VERSION=1.14.3
+RUN cd /tmp \
+    && wget -q "https://support.hdfgroup.org/ftp/HDF5/releases/hdf5-${HDF5_MAJOR}/hdf5-${HDF5_VERSION}/src/hdf5-${HDF5_VERSION}.tar.gz" \
+    && tar xzf hdf5-${HDF5_VERSION}.tar.gz \
+    && cd hdf5-${HDF5_VERSION} \
+    && CC=/usr/local/bin/mpicc ./configure \
+        --prefix=/usr/local \
+        --enable-parallel \
+        --enable-shared \
+        --disable-fortran \
+        --disable-tests \
+        --disable-tools \
+    2>&1 | tail -5 \
+    && make -j "$(nproc)" 2>&1 | tail -5 \
+    && make install 2>&1 | tail -2 \
+    && ldconfig \
+    && cd / && rm -rf /tmp/hdf5-${HDF5_VERSION}*
+
+USER app
+WORKDIR /app
+
+# 3. Rebuild h5py + mpi4py against the new MPICH and HDF5.
+ENV CC=/usr/local/bin/mpicc \
+    HDF5_MPI=ON \
+    HDF5_DIR=/usr/local \
+    HDF5_USE_FILE_LOCKING=FALSE \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
+# Pin mpi4py<4.0 so it binds against the MPI-3.1 ABI rather than MPI-4.x.
+# Cray-MPICH on Perlmutter is based on MPICH 3.4 and does NOT export the
+# MPI 4.x "_c" (long-count / MPI_Count) symbols. mpi4py 4.x calls those
+# symbols, so when --mpi substitutes Cray-MPICH at runtime we get
+# "undefined symbol: MPI_Neighbor_alltoallv_c". NERSC's reference image
+# nersc/mpi4py:3.1.3 uses mpi4py 3.1.3 specifically for this reason.
+#
+# Pre-install setuptools<74 + wheel + cython + pkgconfig into the venv
+# and pass --no-build-isolation. mpi4py 3.1.6's build script calls
+# distutils.ccompiler.new_compiler() with dry_run=... but setuptools
+# >=74 removed that kwarg, so mpi4py 3.1.6 fails to build under the
+# default uv-isolated build env (which pulls a current setuptools).
+# Pinning setuptools<74 in the venv and disabling build isolation
+# routes mpi4py's source build to the compatible setuptools.
+# Two-phase install. The mpi4py 3.1.x and h5py 3.16 source builds want
+# different setuptools versions:
+#   - mpi4py 3.1.6's mpidistutils.run() passes dry_run= to
+#     distutils.ccompiler.new_compiler(), removed in setuptools>=74
+#     => need setuptools<74 + --no-build-isolation.
+#   - h5py 3.16.0's pyproject.toml uses an SPDX license expression
+#     (license="BSD-3-Clause"), only recognised by setuptools>=77
+#     => let h5py use the default isolated build env (which pulls
+#     a current setuptools).
+RUN uv pip install --no-build-isolation \
+        "setuptools<74" wheel "cython>=0.29.31" pkgconfig \
+    && uv pip install --no-binary=mpi4py --no-build-isolation "mpi4py>=3.1,<4" \
+    && uv pip install \
+        --no-binary=h5py \
+        --reinstall \
+        "h5py==3.16.0"
+
+# Build-time sanity.
+RUN /app/.venv/bin/python -c "import h5py, mpi4py; \
+    print('h5py:', h5py.__version__, 'mpi:', h5py.get_config().mpi); \
+    print('mpi4py:', mpi4py.__version__); \
+    print('MPICH version inside container (will be replaced by --mpi at runtime):'); \
+    import subprocess; print(subprocess.check_output(['/usr/local/bin/mpichversion']).decode().split('\\n')[0]); \
+    assert h5py.get_config().mpi is True, 'h5py not built with MPI'"
+
+# NO ENTRYPOINT -- the NERSC podman-hpc docs specifically warn that
+# ENTRYPOINT interferes with --mpi / --openmpi modules, requiring
+# --entrypoint= to override. Leaving it unset avoids that footgun.
+CMD ["/app/.venv/bin/python", "-c", "from mpi4py import MPI; print(f'rank {MPI.COMM_WORLD.Get_rank()}/{MPI.COMM_WORLD.Get_size()}')"]

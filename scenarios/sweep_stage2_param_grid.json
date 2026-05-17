@@ -1,0 +1,19 @@
+{
+  "_comment": "Stage 2 one-at-a-time param grid. Plain odd-length lists implicitly use the middle element as the baseline; entries whose baseline isn't the middle use the explicit {values, baseline} form. 12 knobs x 5 values, dedup shared baseline cell -> 12*4 + 1 = 49 unique policy cells.",
+
+  "strategic_reserve.release_rate_tons_per_step": [50, 100, 150, 250, 400],
+  "strategic_reserve.capacity_tons":              [2000, 4000, 6000, 9000, 14000],
+  "strategic_reserve.initial_stock_tons":         [0, 3000, 6000, 9000, 12000],
+
+  "substitution_trigger_steps":                   [4, 8, 10, 26, 52],
+  "substitution_rate":                            {"values": [0.02, 0.05, 0.08, 0.12, 0.20], "baseline": 0.05},
+  "max_substitution":                             [0.10, 0.20, 0.30, 0.40, 0.50],
+
+  "mine_expansion_price_threshold":               {"values": [1.2, 1.4, 1.7, 2.0, 2.5], "baseline": 2.0},
+  "mine_capacity_growth_per_year_high":           [0.05, 0.10, 0.15, 0.25, 0.40],
+  "recycling_capacity_ramp_per_year":             [0.05, 0.10, 0.20, 0.30, 0.50],
+
+  "retailer_reorder_point_multiplier":            [2.0, 4.0, 6.0, 8.0, 12.0],
+  "retailer_order_quantity_multiplier":           [2.0, 3.0, 4.0, 5.0, 7.0],
+  "processor_inventory_cap_weeks":                [4.0, 6.0, 8.0, 12.0, 16.0]
+}
