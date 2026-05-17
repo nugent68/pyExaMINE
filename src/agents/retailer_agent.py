@@ -8,6 +8,8 @@ delays.
 
 from mesa import Agent
 
+from ..config.overrides import cfg_for, procurement_avoid_list
+
 
 class RetailerAgent(Agent):
     """Agent representing a country's retail aggregate using (s,Q) policy.
@@ -59,10 +61,17 @@ class RetailerAgent(Agent):
 
         # Inventory policy parameters (sizing inputs; the actual
         # reorder_point / order_quantity are properties that scale
-        # with demand_ewma each access).
+        # with demand_ewma each access). The constructor args are
+        # mineral-level defaults sourced by _create_retailers from
+        # model.config; cfg_for upgrades them to country-specific
+        # values when a policy override is loaded.
         self.base_country_demand = base_country_demand
-        self.reorder_mult = reorder_mult
-        self.order_mult = order_mult
+        self.reorder_mult = float(
+            cfg_for(model, country, "retailer_reorder_point_multiplier", reorder_mult)
+        )
+        self.order_mult = float(
+            cfg_for(model, country, "retailer_order_quantity_multiplier", order_mult)
+        )
 
         # Realised-demand tracker. Initialized to the 2024 baseline so
         # the policy sizes correctly from step 0 (before any consumer
@@ -85,7 +94,9 @@ class RetailerAgent(Agent):
         # to this retailer). On-order quantity is computed by scanning
         # transport in_transit, so no separate pending_orders list is
         # needed.
-        self.max_pending = model.config.get("retailer_max_pending_orders", 3)
+        self.max_pending = int(
+            cfg_for(model, country, "retailer_max_pending_orders", 3)
+        )
 
         # Tracking
         self.sold_this_step = 0
@@ -101,7 +112,7 @@ class RetailerAgent(Agent):
 
         # Cache the step()'s only config read.
         self._cfg_demand_ewma_alpha = float(
-            model.config.get("retailer_demand_ewma_alpha", 0.05)
+            cfg_for(model, country, "retailer_demand_ewma_alpha", 0.05)
         )
 
     @property
@@ -204,6 +215,12 @@ class RetailerAgent(Agent):
         """
         self._ensure_canonical_tiers_cached()
 
+        # Procurement-avoid filter: evaluated each call so a mid-run
+        # embargo can drop the relevant country out of the buy queue
+        # without invalidating the cached canonical tiers (manufacturer
+        # country is immutable; the *avoid* set is what changes).
+        avoid = procurement_avoid_list(self.model, self.country)
+
         rng = self.model.random_state
         remaining = self.order_quantity
         for canonical_tier in self._canonical_tiers:
@@ -213,6 +230,10 @@ class RetailerAgent(Agent):
                 continue
             # Copy so we don't mutate the cached canonical list.
             tier = list(canonical_tier)
+            if avoid:
+                tier = [m for m in tier if m.country not in avoid]
+                if not tier:
+                    continue
             rng.shuffle(tier)
             for manufacturer in tier:
                 if remaining <= 0:

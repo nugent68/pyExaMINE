@@ -5,6 +5,8 @@ Collects from EOL pool with product lifetime delay.
 
 from mesa import Agent
 
+from ..config.overrides import cfg_for, price_for
+
 
 class RecyclingAgent(Agent):
     """Agent representing a recycling facility that recovers minerals."""
@@ -54,10 +56,34 @@ class RecyclingAgent(Agent):
         self.collected_this_step = 0
         self.total_recycled = 0
 
+        # Capacity-ramp knob: if a country override sets
+        # ``recycling_capacity_ramp_per_year`` > 0, this facility's
+        # collection_rate and capacity_per_step both compound at that
+        # rate every step (IRA-style subsidy effect). Default 0 (no
+        # ramp) preserves legacy behaviour. Read once and cached -- a
+        # per-step multiplicative update inside step() is then a
+        # single float op.
+        self._cfg_steps_per_year = int(
+            cfg_for(model, country, "steps_per_year", 52)
+        )
+        self._cfg_capacity_ramp_per_year = float(
+            cfg_for(model, country, "recycling_capacity_ramp_per_year", 0.0)
+        )
+
     def step(self):
         """Execute one time step of recycling behavior."""
         self.recycled_this_step = 0
         self.collected_this_step = 0
+
+        # Capacity ramp (US recyclers tunable via country override).
+        # Compounds the per-step knobs that gate how much EOL material
+        # this facility can absorb. capacity_per_step may be None for
+        # the legacy uncapped path.
+        if self._cfg_capacity_ramp_per_year > 0:
+            mult = 1.0 + self._cfg_capacity_ramp_per_year / self._cfg_steps_per_year
+            self.collection_rate *= mult
+            if self.capacity_per_step is not None:
+                self.capacity_per_step *= mult
 
         # 1. Collect from end-of-life pool (raw mineral tons)
         self._collect_eol_materials()
@@ -116,7 +142,7 @@ class RecyclingAgent(Agent):
         could push processors past their inventory_cap and silently
         bypass the backpressure that throttles primary ore purchases.
         """
-        if self.model.current_price <= self.processing_cost:
+        if price_for(self.model, self.country) <= self.processing_cost:
             # Hold raw material in storage until the price recovers.
             return
 

@@ -154,4 +154,19 @@ LITHIUM_CONFIG = {
     "n_steps": 200,
     "random_seed": 42,
     "steps_per_year": 52,  # Weekly time steps
+
+    # Per-country heuristic overrides. Empty by default so all agents
+    # everywhere see the global values above. A policy file loaded at
+    # the CLI (see run_simulation.py --us-policy) populates
+    # country_overrides["USA"] with any combination of:
+    #   - Scalar agent knobs (e.g. "retailer_reorder_point_multiplier")
+    #     to retune US-specific behaviour (see
+    #     src/config/overrides.py:RECOGNISED_OVERRIDE_KEYS for the
+    #     full list of tunable keys).
+    #   - "strategic_reserve" dict that instantiates a
+    #     StrategicReserveAgent in the model.
+    #   - "procurement_avoid_countries": [...] / "procurement_avoid_embargoed": bool
+    #     to gate US processors / manufacturers / retailers against
+    #     buying from listed (or embargoed) origins.
+    "country_overrides": {},
 }

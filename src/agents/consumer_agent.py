@@ -6,6 +6,8 @@ Contributes to end-of-life pool for recycling.
 from mesa import Agent
 import numpy as np
 
+from ..config.overrides import cfg_for, price_for
+
 
 class ConsumerAgent(Agent):
     """Agent representing consumer demand with price elasticity."""
@@ -26,11 +28,17 @@ class ConsumerAgent(Agent):
         self.country = country
         self.label = f"{country}/consumers"
 
-        # Demand parameters
+        # Demand parameters. price_sensitivity is supplied by the
+        # model factory (read globally from config); cfg_for upgrades it
+        # to a country-specific value when a policy override is set, so
+        # US-only elasticity changes don't require modifying the model
+        # factory. demand_threshold_multiplier always reads via cfg_for.
         self.base_demand = base_demand
-        self.price_sensitivity = price_sensitivity
-        self.demand_threshold_multiplier = model.config.get(
-            "consumer_demand_threshold_multiplier", 2.0
+        self.price_sensitivity = float(
+            cfg_for(model, country, "consumer_price_sensitivity", price_sensitivity)
+        )
+        self.demand_threshold_multiplier = float(
+            cfg_for(model, country, "consumer_demand_threshold_multiplier", 2.0)
         )
 
         # Current state
@@ -78,13 +86,19 @@ class ConsumerAgent(Agent):
         product_base = float(cfg.get("consumer_product_base_price", 0.0))
         intensity = float(cfg.get("manufacturer_mineral_intensity", 0.008))
 
+        # Consumers see the regional Li price (IRA premium etc.) when
+        # computing finished-product price; the global initial_price
+        # stays as the elasticity reference (the "baseline" the
+        # consumer compares against doesn't shift with the regional
+        # wedge). With no country override price_for == current_price.
+        regional_price = price_for(self.model, self.country)
         if product_base > 0 and intensity > 0:
             initial_product = product_base + intensity * self.model.initial_price
-            current_product = product_base + intensity * self.model.current_price
+            current_product = product_base + intensity * regional_price
             price_ratio = current_product / initial_product if initial_product > 0 else 1.0
         else:
             # Backward-compat fallback: bare mineral-price elasticity.
-            price_ratio = self.model.current_price / self.model.initial_price
+            price_ratio = regional_price / self.model.initial_price
 
         if price_ratio > 0:
             price_effect = self.price_sensitivity * np.log(price_ratio)
@@ -106,7 +120,7 @@ class ConsumerAgent(Agent):
             max_acceptable_price = (
                 self.model.initial_price * self.demand_threshold_multiplier
             )
-            if self.model.current_price > max_acceptable_price:
+            if regional_price > max_acceptable_price:
                 self.current_demand *= 0.5
 
         self.current_demand = max(0, self.current_demand)

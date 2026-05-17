@@ -54,3 +54,32 @@ local_eval_data/
 # Per-record trajectory tensor caches (.pt) materialised by the
 # TrajectoryDataset.  Regenerable from the per-mineral runs on CFS.
 trajectory_cache/
+
+# US-policy sweep artefacts -- per-job summary.csv / figures / H5
+# trajectories are large and regenerable from
+#   scripts/build_policy_scenarios.py + scripts/sweep_mpi.slurm.
+# Canonical copies (figures + summary.csv) live on NERSC under
+#   /global/cfs/cdirs/amsc001/www/uspolicy/
+# Web portal: https://portal.nersc.gov/project/amsc001/uspolicy/
+runs/
+
+# Local diagnostics / inspectors used during the substitution-paradox
+# investigation. One-off scripts, not part of the canonical pipeline.
+diagnose_*.py
+diagnose_*_results.csv
+inspect_*.py
+verify_compact.py
+compare_bufix.py
+
+# Built scenario JSONs (regenerable from scripts/build_policy_scenarios.py
+# + the param-grid JSON which IS committed).
+scenarios/sweep_*.json
+!scenarios/sweep_*_param_grid.json
+
+# Older Dockerfile drafts kept locally for reference; the canonical
+# images are tagged on Docker Hub and rebuildable from
+# Containerfile.podman-mpi (podman-hpc / Perlmutter) or
+# Dockerfile.us-policy (laptop / Shifter fallback).
+Dockerfile.mpi
+Dockerfile.mpi-v2
+Dockerfile.mpi-v3

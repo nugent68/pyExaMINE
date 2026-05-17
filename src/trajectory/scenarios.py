@@ -103,6 +103,27 @@ CANONICAL_2050: dict[tuple[str, str], dict] = {
                                 "embargoes": [], "chokepoint_crises": []},
     ("platinum", "baseline"): {"mineral": "platinum",
                                 "embargoes": [], "chokepoint_crises": []},
+
+    # china_us_embargo_2030: 3-year China embargo starting step 312
+    # (~2030). Designed for the US-policy-lever study: combine this
+    # scenario with a --us-policy file to evaluate strategic reserve /
+    # procurement-avoidance / recycling-ramp responses against the
+    # baseline US (empty policy) under the same shock.
+    ("lithium",  "china_us_embargo_2030"): {
+        "mineral": "lithium",
+        "embargoes":         [_embargo("China", 312, 156)],
+        "chokepoint_crises": [],
+    },
+    ("nickel",   "china_us_embargo_2030"): {
+        "mineral": "nickel",
+        "embargoes":         [_embargo("China", 312, 156)],
+        "chokepoint_crises": [],
+    },
+    ("platinum", "china_us_embargo_2030"): {
+        "mineral": "platinum",
+        "embargoes":         [_embargo("China", 312, 156)],
+        "chokepoint_crises": [],
+    },
 }
 
 
