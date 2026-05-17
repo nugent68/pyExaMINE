@@ -543,6 +543,94 @@ Known chokepoints: `Strait of Hormuz`, `Suez Canal`, `Malacca Strait`,
 ],
 ```
 
+### Run a US-policy scenario
+
+`--us-policy PATH` loads a JSON policy file into
+`config["country_overrides"]["USA"]` so a sweep can perturb only the
+US subset of agents without touching the global config. Four reference
+archetypes ship under `policies/`:
+
+| File | What it models |
+|---|---|
+| `us_default.json` | Empty (control arm — bit-identical to omitting `--us-policy`). |
+| `us_strategic_reserve.json` | 6 kt US Li strategic reserve, pre-stocked to capacity; releases on China embargo; US procurement filters out embargoed-country suppliers; modest retailer-buffer + recycling-ramp uplift. |
+| `us_aggressive.json` | Same shape, larger reserve (14 kt) and more aggressive mine-expansion / capacity-growth / recycling-ramp parameters. |
+| `us_ira.json` | Static +50% US-domestic Li price wedge modelling IRA §45X / §30D credits, layered on the `us_strategic_reserve` buffers. |
+
+```bash
+# 3-year China embargo against the US strategic-reserve archetype:
+uv run python run_simulation.py --mineral lithium --steps 1352 --seed 42 \
+    --embargo "China:312:156" \
+    --us-policy policies/us_strategic_reserve.json
+```
+
+What a policy can override (see `src/config/overrides.py:RECOGNISED_OVERRIDE_KEYS`):
+- **Scalar agent knobs.** Any `_cfg_*` heuristic — retailer reorder /
+  order multipliers, mine mothball / expansion / capacity-growth
+  thresholds, processor inventory caps, manufacturer substitution
+  trigger / rate / max, consumer demand-threshold multiplier, etc.
+- **`strategic_reserve` dict.** Instantiates a `StrategicReserveAgent`
+  (`src/agents/strategic_reserve_agent.py`) — buys from local
+  processors when `current_price < buy_below_price` and reserve
+  below `capacity`, releases into local manufacturers when
+  `current_price > release_above_price` OR an embargo is active
+  against a country in `release_on_embargo_of`.
+- **`procurement_avoid_countries: [...]`** / **`procurement_avoid_embargoed: true`.**
+  US processors / manufacturers / retailers refuse to source from
+  listed (or currently-embargoed) origins. Distinct from the
+  producer-side embargo block — lets a scenario express "US refuses
+  to buy from China" independently of "China refuses to sell to US".
+- **`price_spread: <float>`.** Regional Li price multiplier: US agents
+  see `current_price × (1 + price_spread)` for every price-sensitive
+  decision (substitution, mine utilization, consumer elasticity,
+  reserve trigger). Default 0; `us_ira.json` sets it to 0.50.
+
+The `country_overrides` machinery is country-generic — adding
+`country_overrides["China"]` later is zero code change; only US-
+targeted policy files ship today.
+
+#### Parameter sweeps on Perlmutter (NERSC)
+
+`scripts/build_policy_scenarios.py` emits a scenarios JSON for the
+sweep tooling. Three modes:
+
+```bash
+# Archetype comparison (Stage 1)
+python scripts/build_policy_scenarios.py \
+    --policies policies/us_default.json policies/us_strategic_reserve.json policies/us_aggressive.json \
+    --seeds $(seq 0 19) --minerals lithium --n-steps 1352 \
+    --embargo-start 312 --embargo-durations $(seq 52 52 1040) \
+    --output scenarios/sweep_stage1.json   # 1,200 scenarios
+
+# One-at-a-time (OAT) scan of 12 policy knobs (Stage 2 v2)
+python scripts/build_policy_scenarios.py \
+    --policies policies/us_aggressive.json \
+    --param-grid scenarios/sweep_stage2v2_param_grid.json \
+    --seeds $(seq 0 19) --minerals lithium --n-steps 1352 \
+    --embargo-start 312 --embargo-durations $(seq 52 52 1040) \
+    --output scenarios/sweep_stage2v2.json   # 19,600 scenarios
+
+# 3D full-factorial cross of substitution x price_spread (Stage 3)
+python scripts/build_policy_scenarios.py \
+    --policies policies/us_aggressive.json \
+    --param-grid-factorial scenarios/sweep_stage3_param_grid.json \
+    --seeds $(seq 0 19) --minerals lithium --n-steps 1352 \
+    --embargo-start 312 --embargo-durations $(seq 52 52 1040) \
+    --output scenarios/sweep_stage3.json     # 32,000 scenarios
+```
+
+Then on Perlmutter, `sbatch scripts/sweep_mpi.slurm` (8 nodes × 128
+ranks, 30-min debug-QoS) runs the sweep via MPI / parallel HDF5 from
+the `pyexamine:mpi-podman` image (built from
+`Containerfile.podman-mpi`). Each MPI rank writes its rows directly
+into a single collectively-opened `sweep.h5`; no per-scenario files,
+no post-job compact step. Verified throughput: 32,000 scenarios on
+1,024 ranks in 19 min wall (Stage 3 reference run).
+
+See `PERLMUTTER_USPOLICY.md` for the full runbook (image build,
+sweep submission, verification checklist) and the sweep outputs at
+[portal.nersc.gov/project/amsc001/uspolicy/](https://portal.nersc.gov/project/amsc001/uspolicy/).
+
 ### Command-Line Options
 
 ```
