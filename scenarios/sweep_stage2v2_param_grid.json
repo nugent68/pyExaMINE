@@ -1,0 +1,19 @@
+{
+  "_comment": "Stage 2 v2: anchored on policies/us_aggressive.json (China shuts the US out: producer-side embargo on Chinese mines + US procurement-side avoidance of China, both during and after the embargo window). Each grid uses the explicit {values, baseline} form because us_aggressive's defaults are not the middle of the natural value lists.",
+
+  "strategic_reserve.release_rate_tons_per_step": {"values": [100, 150, 250, 400, 600], "baseline": 250},
+  "strategic_reserve.capacity_tons":              {"values": [4000, 8000, 12000, 18000, 24000], "baseline": 12000},
+  "strategic_reserve.initial_stock_tons":         {"values": [0, 6000, 12000, 18000, 24000], "baseline": 12000},
+
+  "substitution_trigger_steps":                   {"values": [4, 6, 10, 26, 52], "baseline": 6},
+  "substitution_rate":                            {"values": [0.04, 0.08, 0.12, 0.16, 0.24], "baseline": 0.08},
+  "max_substitution":                             {"values": [0.20, 0.30, 0.50, 0.70, 0.90], "baseline": 0.50},
+
+  "mine_expansion_price_threshold":               {"values": [1.1, 1.2, 1.4, 1.7, 2.0], "baseline": 1.4},
+  "mine_capacity_growth_per_year_high":           {"values": [0.10, 0.15, 0.25, 0.35, 0.50], "baseline": 0.25},
+  "recycling_capacity_ramp_per_year":             {"values": [0.10, 0.20, 0.35, 0.50, 0.75], "baseline": 0.35},
+
+  "retailer_reorder_point_multiplier":            {"values": [4.0, 6.0, 8.0, 12.0, 16.0], "baseline": 8.0},
+  "retailer_order_quantity_multiplier":           {"values": [3.0, 4.0, 5.0, 7.0, 10.0], "baseline": 5.0},
+  "processor_inventory_cap_weeks":                [4.0, 6.0, 8.0, 12.0, 16.0]
+}
