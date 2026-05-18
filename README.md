@@ -13,10 +13,12 @@ chokepoint crises, and material substitution.
 
 ## Overview
 
-This project models three critical minerals essential for clean energy
-transitions:
+This project models five critical minerals essential for clean energy
+transitions and battery production:
 - **Lithium** - Battery technology
 - **Nickel** - Battery cathodes and stainless steel
+- **Cobalt** - NMC / NCA battery cathodes
+- **Manganese** - NMC / LMFP battery cathodes (battery-grade HPMSM scope; steel-grade ferro-Mn is out of scope)
 - **Platinum** - Catalytic converters and fuel cells
 
 All facility-level inputs live in `data/` at the project root and are
@@ -31,9 +33,10 @@ the per-country shipping/rail/truck fleet.
 ## Key Features
 
 ### 🌍 Data-Driven
-- **Per-facility** mines, processors, and recyclers for Lithium, Nickel,
-  and Platinum (~30 Li mines, ~25 Li processors, ~20 Li recyclers; the
-  Ni and Pt files are similarly populated).
+- **Per-facility** mines, processors, and recyclers for all five
+  minerals (~30 Li mines, ~25 Li processors, ~20 Li recyclers; the
+  Ni / Pt / Co / Mn files are similarly populated; battery-grade
+  Mn / HPMSM scope only).
 - **Country-level** manufacturer and consumer demand shares (~12
   manufacturer countries, ~25 consumer countries).
 - **GDP-scaled per-country agent fan-out**: each country in the share
@@ -353,7 +356,7 @@ pyExaMINE/
 │       ├── nickel_config.py
 │       └── platinum_config.py
 ├── outputs/                           # Generated results
-│   ├── {lithium,nickel,platinum}_*    # canonical 24-yr baselines
+│   ├── {lithium,nickel,platinum,cobalt,manganese}_*    # canonical 24-yr baselines
 │   ├── chile_li/, china_li/, australia_li/, chile_china_li/,
 │   │   big3_li_5yr/, sa_pt/                            # embargo scenarios
 │   ├── suez_li/, malacca_li/, hormuz_li/,
@@ -634,8 +637,8 @@ sweep submission, verification checklist) and the sweep outputs at
 ### Command-Line Options
 
 ```
---mineral {lithium,nickel,platinum}  # Mineral to simulate
---all                                # Run all three minerals
+--mineral {lithium,nickel,platinum,cobalt,manganese}  # Mineral to simulate
+--all                                # Run all five minerals (Li/Ni/Co/Mn/Pt)
 --steps N                            # Number of simulation steps (default: 200)
 --geo-prob P                         # Random geopolitical event probability (default: 0.01)
 --seed N                             # Random seed for reproducibility
@@ -1074,27 +1077,37 @@ $14,328 ± 114, Ni $11,256 ± 78, Pt $39,298,152 ± 216,962.
 
 ## Model Parameters by Mineral
 
-| Parameter | Lithium | Nickel | Platinum |
-|-----------|---------|--------|----------|
-| Initial Price ($/ton) | 17,000 | 18,000 | 30,000,000 |
-| Mineral intensity (t / product unit) | 0.008 (8 kg Li/EV) | 0.04 (40 kg Ni/EV) | 3 × 10⁻⁶ (3 g Pt/catalyst) |
-| Product lifetime (steps) | 520 (~10 yr) | 520 (~10 yr) | 624 (~12 yr) |
-| Conversion Efficiency (per facility, avg) | 0.80 | 0.78 | 0.85 |
-| Collection Rate (aggregate) | 0.30 | 0.60 | 0.75 |
-| Recovery Efficiency (per facility, avg) | 0.93 | 0.91 | 0.91 |
+| Parameter | Lithium | Nickel | Cobalt | Manganese | Platinum |
+|-----------|---------|--------|--------|-----------|----------|
+| Initial Price ($/ton) | 17,000 | 18,000 | 30,000 | 5,000 | 30,000,000 |
+| Mineral intensity (t / product unit) | 0.008 (8 kg Li/EV) | 0.04 (40 kg Ni/EV) | 0.012 (12 kg Co/EV) | 0.018 (18 kg Mn/EV) | 3 × 10⁻⁶ (3 g Pt/catalyst) |
+| Product lifetime (steps) | 520 (~10 yr) | 520 (~10 yr) | 520 (~10 yr) | 520 (~10 yr) | 624 (~12 yr) |
+| Conversion Efficiency (per facility, avg) | 0.80 | 0.78 | 0.85 | 0.88 | 0.85 |
+| Collection Rate (aggregate) | 0.30 | 0.60 | 0.50 | 0.10 | 0.75 |
+| Recovery Efficiency (per facility, avg) | 0.93 | 0.91 | 0.92 | 0.83 | 0.91 |
+| Max substitution (cathode-mineral swap) | 0.30 | 0.30 | **0.45** | 0.25 | 0.20 |
+| 2024 demand (kt/yr) | 150 | 3,500 | 230 | 80 (HPMSM only) | 0.25 |
+
+Cobalt and Manganese are scoped to **battery production**: Mn covers
+the battery-grade HPMSM (high-purity Mn sulphate) sub-market only;
+the much larger ferro-Mn / steel-grade Mn flow is out of scope. Mn
+recycling collection is intentionally low (0.10) because battery-
+grade Mn is the lowest-value cathode mineral and dedicated Mn
+recovery is nascent — most Mn in EOL packs ends up in slag during
+pyrometallurgical Ni/Co recovery.
 
 ## Agent counts (worldwide model, default `agents_per_gdp_billion = 500`)
 
-| Agent type        | Lithium | Nickel | Platinum |
-|-------------------|--------:|-------:|---------:|
-| MineAgent         |   30    |   29   |   18     |
-| ProcessorAgent    |   25    |   28   |   11     |
-| RecyclingAgent    |   20    |   25   |   15     |
-| ManufacturerAgent |  142    |  146   |  152     |
-| RetailerAgent     |  175    |  178   |  178     |
-| ConsumerAgent     |  175    |  178   |  178     |
-| TransportAgent    |   85    |   85   |   85     |
-| **Total**         | **652** | **669** | **637** |
+| Agent type        | Lithium | Nickel | Cobalt | Manganese | Platinum |
+|-------------------|--------:|-------:|-------:|----------:|---------:|
+| MineAgent         |   30    |   29   |   22   |   22      |   18     |
+| ProcessorAgent    |   25    |   28   |   22   |   20      |   11     |
+| RecyclingAgent    |   20    |   25   |   20   |   11      |   15     |
+| ManufacturerAgent |  142    |  146   |  150   |  150      |  152     |
+| RetailerAgent     |  175    |  178   |  175   |  175      |  178     |
+| ConsumerAgent     |  175    |  178   |  175   |  175      |  178     |
+| TransportAgent    |   85    |   85   |   85   |   85      |   85     |
+| **Total**         | **652** | **669** | **649** | **638**  | **637**  |
 
 Mines, processors, and recyclers come from the per-facility CSVs in
 `data/`. Manufacturer / retailer / consumer counts come from

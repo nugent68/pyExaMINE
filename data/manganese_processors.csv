@@ -1,0 +1,26 @@
+# Curated estimate of major manganese refiners (2024 baseline).
+# Capacity[t/yr] is contained Mn-metal-equivalent output (HPMSM for
+# battery-grade; electrolytic Mn metal for high-purity intermediate).
+# Battery-grade Mn refining is ~90% concentrated in China today;
+# Western HPMSM capacity is ramping but small.
+country,facility,capacity_2024[t/yr],conversion_efficiency,energy_cost
+China,CITIC Dameng Daxin,35000,0.88,1500
+China,Ningbo Shanshan HPMSM,28000,0.88,1500
+China,Tosoh Shaoxing HPMSM,22000,0.89,1600
+China,Erdos Manganese,18000,0.87,1500
+China,Hunan-Minmetals HPMSM,15000,0.87,1500
+China,Zunyi Manganese,12000,0.86,1500
+China,Guizhou Mengwei,10000,0.86,1500
+China,Guangxi-Daxin Refinery,9000,0.86,1500
+Australia,Element 25 Louisiana (planned),5000,0.90,2000
+Australia,Pilgangoora HPMSM (planned),3000,0.90,2000
+Czech Republic,Euro Manganese Chvaletice (pilot),1000,0.91,2200
+Canada,Manganese X Battery Hill,2000,0.89,2100
+USA,Element 25 Louisiana (planned),3000,0.90,2000
+USA,South32 Hermosa AZ (planned),2000,0.89,2100
+Korea,POSCO Future M,4000,0.90,1900
+Korea,EcoPro CnG HPMSM,2500,0.90,1900
+Japan,Tosoh Yokkaichi,3000,0.91,2100
+Japan,Mitsui Mining HPMSM,1500,0.90,2100
+South Africa,Manganese Metal Company,18000,0.87,1700
+Norway,Eramet Sauda (electrolytic),12000,0.88,2200

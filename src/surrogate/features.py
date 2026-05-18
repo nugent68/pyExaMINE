@@ -58,6 +58,14 @@ COUNTRIES_BY_MINERAL: dict[str, list[str]] = {
         "Canada", "Other countries", "Russia", "South Africa",
         "USA", "Zimbabwe",
     ],
+    "cobalt": [
+        "Australia", "Canada", "Cuba", "DRC", "Indonesia", "Madagascar",
+        "Other countries", "Philippines", "Russia",
+    ],
+    "manganese": [
+        "Australia", "Brazil", "China", "Gabon", "Ghana", "India",
+        "Mexico", "Other countries", "South Africa", "Ukraine",
+    ],
 }
 
 #: Routing chokepoints recognised by the simulation.

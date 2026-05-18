@@ -22,6 +22,8 @@ from src.visualization.visualizer import (
 from src.config.lithium_config import LITHIUM_CONFIG
 from src.config.nickel_config import NICKEL_CONFIG
 from src.config.platinum_config import PLATINUM_CONFIG
+from src.config.cobalt_config import COBALT_CONFIG
+from src.config.manganese_config import MANGANESE_CONFIG
 
 
 def parse_arguments():
@@ -33,14 +35,14 @@ def parse_arguments():
     parser.add_argument(
         '--mineral',
         type=str,
-        choices=['lithium', 'nickel', 'platinum'],
+        choices=['lithium', 'nickel', 'platinum', 'cobalt', 'manganese'],
         help='Mineral to simulate'
     )
-    
+
     parser.add_argument(
         '--all',
         action='store_true',
-        help='Run all three minerals'
+        help='Run all five minerals'
     )
     
     parser.add_argument(
@@ -139,19 +141,22 @@ def parse_arguments():
 
 def get_config(mineral_name):
     """Get configuration for a mineral.
-    
+
     Args:
-        mineral_name: Name of mineral (lithium, nickel, platinum)
-    
+        mineral_name: Name of mineral (lithium, nickel, platinum,
+            cobalt, manganese).
+
     Returns:
         Configuration dictionary
     """
     configs = {
-        'lithium': LITHIUM_CONFIG,
-        'nickel': NICKEL_CONFIG,
-        'platinum': PLATINUM_CONFIG
+        'lithium':   LITHIUM_CONFIG,
+        'nickel':    NICKEL_CONFIG,
+        'platinum':  PLATINUM_CONFIG,
+        'cobalt':    COBALT_CONFIG,
+        'manganese': MANGANESE_CONFIG,
     }
-    
+
     return configs.get(mineral_name.lower())
 
 
@@ -342,7 +347,7 @@ def run_all_minerals(n_steps=None, geo_prob=None, seed=None,
     Returns:
         Dictionary of model instances
     """
-    minerals = ['lithium', 'nickel', 'platinum']
+    minerals = ['lithium', 'nickel', 'platinum', 'cobalt', 'manganese']
     models = {}
 
     print(f"\n{'='*70}")

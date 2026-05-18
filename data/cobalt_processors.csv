@@ -1,0 +1,26 @@
+# Curated estimate of major cobalt refiners (2024 baseline).
+# Capacity[t/yr] is contained Co metal-equivalent output (sulphate,
+# metal, oxide). China dominates ~70% of global Co refining.
+country,facility,capacity_2024[t/yr],conversion_efficiency,energy_cost
+China,Huayou Cobalt Quzhou,35000,0.85,2200
+China,CMOC Quzhou (LITHEA),30000,0.85,2200
+China,GEM Jingmen,28000,0.85,2200
+China,Tianjin-Sumitomo TMC,15000,0.86,2300
+China,Tongling Tianqi,12000,0.85,2200
+China,Greatpower Jiangsu,10000,0.85,2200
+China,Lanzhou Jinchuan,8000,0.84,2300
+China,Yantai Cash,8000,0.85,2200
+Finland,Freeport Kokkola (Nornickel),15000,0.88,2400
+Belgium,Umicore Olen,5000,0.90,2500
+Canada,Vale Long Harbour,3000,0.87,2400
+Canada,Sherritt Fort Saskatchewan,4000,0.86,2400
+Norway,Glencore Nikkelverk,2000,0.88,2500
+Japan,Sumitomo Niihama,4000,0.88,2700
+Japan,Pacific Metals,1500,0.85,2700
+Korea,EcoPro CnG,4000,0.87,2500
+Korea,POSCO Future M,3000,0.87,2500
+Australia,Cobalt Blue Kwinana (planned),1500,0.86,2600
+Madagascar,Ambatovy Refinery,3000,0.83,2300
+Cuba,Moa JV Refinery,3500,0.82,2100
+Indonesia,IMIP Co Sulphate,5000,0.83,2000
+Indonesia,IWIP Co Sulphate,4000,0.83,2000

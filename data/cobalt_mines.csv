@@ -1,0 +1,28 @@
+# Curated estimate of major cobalt mining operations (2024 baseline).
+# Production[t/yr] is contained Co metal. Reserves[t] also as Co metal.
+# DRC dominates (~70% of mined Co); Indonesian HPAL byproduct is the
+# fastest-growing share. Russian Norilsk and Cuban Moa are sulfide-Ni
+# byproduct streams.
+country,facility,production_2024[t/yr],reserves[t],extraction_cost
+DRC,Mutanda (Glencore),20000,2500000,18000
+DRC,Tenke-Fungurume (CMOC),20000,3200000,17500
+DRC,KCC-Kamoto (Glencore),17000,2200000,18000
+DRC,Kibali (Barrick),3000,200000,22000
+DRC,Etoile (CMOC),12000,1500000,17800
+DRC,Kisanfu (CMOC),12000,1800000,17500
+DRC,Metalkol (Eurasian Resources),8000,800000,19000
+DRC,Pumpi (Shalina),4000,400000,20000
+DRC,Boss Mining (ERG),3000,300000,21000
+Indonesia,Sulawesi-Morowali HPAL,15000,600000,15500
+Indonesia,Halmahera-Weda Bay HPAL,12000,500000,15500
+Indonesia,Pomalaa HPAL,5000,250000,16000
+Russia,Norilsk-Talnakh,3000,250000,19500
+Russia,Kola-Pechenga,500,80000,19500
+Australia,Mt Marion (Cobalt Blue Broken Hill),1000,60000,23000
+Australia,Murrin Murrin (Glencore),3000,180000,22500
+Cuba,Moa,4000,500000,15000
+Madagascar,Ambatovy,3000,140000,17000
+Canada,Voisey's Bay (Vale),2000,55000,21000
+Canada,Raglan (Glencore),1500,40000,21000
+Philippines,Coral Bay HPAL,1000,40000,16500
+Other countries,Other Co operations,4000,200000,19000
