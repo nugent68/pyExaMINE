@@ -1,0 +1,18 @@
+# Country-level cobalt-using manufacturer share (2024).
+# Co-bearing battery cathode manufacturing (NMC, NCA, LCO).
+# share = fraction of global Co-consuming manufacturing in this country.
+country,share
+China,0.62
+Korea,0.10
+Japan,0.07
+USA,0.06
+Germany,0.04
+Hungary,0.025
+Poland,0.02
+Sweden,0.015
+France,0.01
+Spain,0.01
+UK,0.01
+India,0.01
+Canada,0.005
+Italy,0.005

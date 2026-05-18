@@ -36,6 +36,8 @@ _ENSEMBLE_RUN_DIR = _REPO_ROOT / 'ensemble_runs'
 from src.config.lithium_config import LITHIUM_CONFIG
 from src.config.nickel_config import NICKEL_CONFIG
 from src.config.platinum_config import PLATINUM_CONFIG
+from src.config.cobalt_config import COBALT_CONFIG
+from src.config.manganese_config import MANGANESE_CONFIG
 from src.model.supply_chain_model import MineralSupplyChainModel
 from src.visualization.visualizer import (
     create_summary_statistics,
@@ -54,9 +56,11 @@ EMBARGO_START = 624          # year 12 in the 24-yr canonical run
 SEED = 42
 
 CONFIGS = {
-    'lithium': LITHIUM_CONFIG,
-    'nickel': NICKEL_CONFIG,
-    'platinum': PLATINUM_CONFIG,
+    'lithium':   LITHIUM_CONFIG,
+    'nickel':    NICKEL_CONFIG,
+    'platinum':  PLATINUM_CONFIG,
+    'cobalt':    COBALT_CONFIG,
+    'manganese': MANGANESE_CONFIG,
 }
 
 
@@ -326,7 +330,7 @@ def _regenerate_ensembles_impl(out_root: Path, n_seeds: int, seed_base: int,
     # ---- Canonical baselines (Li/Ni/Pt at CANONICAL_STEPS) ----
     print("\n[ensemble] canonical baselines")
     canonical_baselines: dict[str, list[pd.DataFrame]] = {}
-    for mineral in ('lithium', 'nickel', 'platinum'):
+    for mineral in tuple(CONFIGS.keys()):
         print(f"  {mineral}")
         canonical_baselines[mineral] = _run_ensemble(
             mineral, CANONICAL_STEPS, out_root,
@@ -386,7 +390,7 @@ def _regenerate_ensembles_impl(out_root: Path, n_seeds: int, seed_base: int,
     base_dir = out_2050 / 'baseline'
     base_dir.mkdir(parents=True, exist_ok=True)
     base_summary_rows = []
-    for mineral in ('lithium', 'nickel', 'platinum'):
+    for mineral in tuple(CONFIGS.keys()):
         print(f"  {mineral}")
         baselines_2050[mineral] = _run_ensemble(
             mineral, SCENARIO_2050_STEPS, base_dir,
@@ -399,7 +403,7 @@ def _regenerate_ensembles_impl(out_root: Path, n_seeds: int, seed_base: int,
     # know which windows we need (done in scenario loop below).
     # For the baseline summary CSV, just dump the full-run mean.
     full_window = (0, SCENARIO_2050_STEPS)
-    for mineral in ('lithium', 'nickel', 'platinum'):
+    for mineral in tuple(CONFIGS.keys()):
         s, _ = _summarize_ensemble(
             baselines_2050[mineral], full_window[0], full_window[1],
         )
@@ -408,7 +412,7 @@ def _regenerate_ensembles_impl(out_root: Path, n_seeds: int, seed_base: int,
         s['window_len'] = full_window[1]
         base_summary_rows.append(s)
     _write_ensemble_summary(base_dir, base_summary_rows)
-    for mineral in ('lithium', 'nickel', 'platinum'):
+    for mineral in tuple(CONFIGS.keys()):
         plot_ensemble_band(
             base_dir, mineral,
             baselines_2050[mineral],
@@ -489,7 +493,7 @@ def _in_window_avg(df: pd.DataFrame, start: int, length: int) -> float:
 def regenerate_canonical_baselines(out_root: Path):
     print("\n=== Canonical 24-yr baselines ===")
     dfs = {}
-    for mineral in ('lithium', 'nickel', 'platinum'):
+    for mineral in tuple(CONFIGS.keys()):
         print(f"\n[baseline] {mineral}")
         dfs[mineral] = _run(mineral, CANONICAL_STEPS, out_root)
     return dfs
@@ -654,7 +658,7 @@ def regenerate_2050_scenarios(out_root: Path):
 
     # Baseline first (used to compute deltas).
     baselines: dict[str, pd.DataFrame] = {}
-    for mineral in ('lithium', 'nickel', 'platinum'):
+    for mineral in tuple(CONFIGS.keys()):
         print(f"\n[2050 baseline] {mineral}")
         baselines[mineral] = _run(
             mineral, SCENARIO_2050_STEPS, out_2050 / 'baseline',
@@ -716,7 +720,7 @@ def plot_scenarios_2050(out_root: Path):
     """Price-time-series plot grouped by scenario for the 2050 runs."""
     out_2050 = out_root / '2050'
     scenarios = sorted({s for (_, s) in SCENARIOS_2050})
-    minerals = ('lithium', 'nickel', 'platinum')
+    minerals = tuple(CONFIGS.keys())
 
     fig, axes = plt.subplots(len(minerals), 1, figsize=(12, 9), sharex=True)
     palette = plt.get_cmap('tab10')
