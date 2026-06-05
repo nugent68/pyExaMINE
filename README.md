@@ -1212,7 +1212,17 @@ Contributions are welcome! Areas for extension:
 
 ## License
 
-MIT License - See LICENSE file for details
+pyExaMINE Copyright (c) 2026, The Regents of the University of
+California, through Lawrence Berkeley National Laboratory (subject
+to receipt of any required approvals from the U.S. Dept. of Energy).
+All rights reserved.
+
+Distributed under a modified BSD-3-Clause license — same form used
+by other AMReX-ABM / LBNL agent-based simulation codes (see
+[ExaEpi/LICENSE.txt](https://github.com/AMReX-ABM/ExaEpi/blob/main/LICENSE.txt)
+for the canonical text this is adapted from). See
+[LICENSE.txt](LICENSE.txt) for the full text including the
+"Enhancements" grant-back clause.
 
 ## Citation
 
