@@ -106,7 +106,7 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--minerals", nargs="+",
-        choices=["lithium", "nickel", "platinum"],
+        choices=["lithium", "nickel", "platinum", "cobalt", "manganese"],
         default=["lithium"],
         help="Minerals to include (default: lithium only).",
     )

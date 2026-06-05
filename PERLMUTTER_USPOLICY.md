@@ -1,8 +1,123 @@
 # Running US-policy sweeps on Perlmutter (NERSC)
 
-End-to-end recipe for running the China-embargo / US-policy study on
-Perlmutter via Shifter. Three changes vs. the base
-[INSTALL.md#docker](INSTALL.md#docker) Perlmutter recipe:
+End-to-end recipe for the US-policy / China-embargo study. Two
+pipelines, in order of preference:
+
+- **MPI / parallel-HDF5 (recommended for sweeps ≥ 1k scenarios).** One
+  rank per scenario slice, every rank writes directly into a single
+  collectively-opened `sweep.h5`. No per-scenario files, no post-job
+  compact step. Uses `podman-hpc` (NOT Shifter) so the in-container
+  MPICH gets ABI-substituted with Cray-MPICH at run time. See
+  [§A](#a-mpi--parallel-hdf5-pipeline-recommended).
+- **Single-rank Shifter (legacy / debugging).** One scenario per
+  Shifter invocation; works fine for archetype-comparison and small
+  smoke tests. See [§B](#b-single-rank-shifter-pipeline-legacy).
+
+---
+
+## A. MPI / parallel-HDF5 pipeline (recommended)
+
+### A.1. Image distribution
+
+The MPI image is `pyexamine:mpi-podman` — built from
+[Containerfile.podman-mpi](Containerfile.podman-mpi) with MPICH 4.0.2
+ch4:ofi + embedded libfabric, HDF5 1.14.3 parallel, mpi4py 3.1.6,
+h5py 3.16 with `HDF5_MPI=ON`. The install layout matches NERSC's
+reference image `registry.nersc.gov/library/nersc/mpi4py:3.1.3`
+so `podman-hpc --mpi` knows where to splice Cray-MPICH in at runtime.
+
+Three equivalent ways to populate `pyexamine:mpi-podman` in your
+local podman-hpc squash cache:
+
+| Path | Command | When |
+|---|---|---|
+| **NERSC project registry** (fast, recommended) | `podman-hpc pull registry.nersc.gov/library/amsc001/pyexamine:mpi-podman && podman-hpc tag …` | Default — pulls from inside NERSC's network |
+| **Docker Hub mirror** | `podman-hpc pull docker.io/nugent68/pyexamine:mpi-podman && podman-hpc tag …` | Off-NERSC reproductions, audits |
+| **Build from source** | `podman-hpc build -f Containerfile.podman-mpi -t pyexamine:mpi-podman .` | Modifying the image; ~30 min on a login node |
+
+In all three cases, finish with `podman-hpc migrate pyexamine:mpi-podman`
+to push the image into the per-node squash cache for fast load on
+compute. The slurm scripts reference the unqualified local tag
+`pyexamine:mpi-podman` so the same script works for all three pull
+paths.
+
+For deep archival (e.g. publishing a paper that depends on this
+exact image), keep a tarball on CFS alongside the registry tags:
+
+```bash
+podman-hpc save pyexamine:mpi-podman \
+    -o $CFS/amsc001/images/pyexamine_mpi-podman_$(date +%Y%m%d).tar
+gzip $CFS/amsc001/images/pyexamine_mpi-podman_*.tar
+```
+
+### A.2. Publishing a new image build
+
+When you update [Containerfile.podman-mpi](Containerfile.podman-mpi)
+and want collaborators on `amsc001` to use your new build:
+
+```bash
+# (one time per Perlmutter machine) authenticate to both registries
+podman-hpc login registry.nersc.gov            # NERSC iris token
+podman-hpc login docker.io                     # Docker Hub PAT
+
+# After podman-hpc build -f Containerfile.podman-mpi -t pyexamine:mpi-podman .
+podman-hpc tag pyexamine:mpi-podman \
+    registry.nersc.gov/library/amsc001/pyexamine:mpi-podman
+podman-hpc tag pyexamine:mpi-podman \
+    docker.io/nugent68/pyexamine:mpi-podman
+
+podman-hpc push registry.nersc.gov/library/amsc001/pyexamine:mpi-podman
+podman-hpc push docker.io/nugent68/pyexamine:mpi-podman
+```
+
+NERSC iris tokens at <https://iris.nersc.gov> (look under "registry tokens");
+Docker Hub PATs at <https://hub.docker.com/settings/security>.
+
+### A.3. Running a sweep
+
+```bash
+# 1. Build the scenarios JSON (factorial example, Stage 3 shape)
+ssh perlmutter.nersc.gov 'cd /pscratch/sd/n/nugent/pyexamine && \
+    podman-hpc run --rm --entrypoint= --user 0 \
+        --volume=$PWD:/work \
+        pyexamine:mpi-podman \
+    /app/.venv/bin/python /work/scripts/build_policy_scenarios.py \
+        --policies /work/policies/us_aggressive.json \
+        --param-grid-factorial /work/scenarios/sweep_stage3_param_grid.json \
+        --seeds $(seq 0 19) --minerals lithium --n-steps 1352 \
+        --embargo-start 312 --embargo-durations $(seq 52 52 1040) \
+        --output /work/scenarios/sweep_stage3.json'
+
+# 2. Submit (8 nodes × 128 ranks = 1024-way parallel; ~20 min for 32k scenarios)
+ssh perlmutter.nersc.gov 'cd /pscratch/sd/n/nugent/pyexamine && \
+    SCENARIOS=scenarios/sweep_stage3.json sbatch scripts/sweep_mpi.slurm'
+
+# 3. Outputs under $SCRATCH/pyexamine/runs/sweep_mpi_<jobid>/
+#       sweep.h5     (single (N, T) HDF5, one row per scenario)
+#       summary.csv  (KPI table for downstream plotting)
+```
+
+### A.4. Verified srun invocation (read the comments)
+
+Three subtleties baked into [scripts/sweep_mpi.slurm](scripts/sweep_mpi.slurm):
+
+- **Bare `srun`** with no `--mpi=pmi2` / `--cpu-bind=cores`. Perlmutter's
+  default `cray_shasta`/PALS plugin is what `podman-hpc --mpi` expects.
+  Forcing `pmi2` produces singleton COMM_WORLD per rank.
+- **`podman-hpc run --user 0`** so the in-container PMI/PALS shim can
+  read the mode-600 root-owned
+  `/var/spool/slurmd/mpi_cray_shasta/<job>.<step>/apinfo` that
+  `podman-hpc --mpi` bind-mounts in. Without it: `PMI_Init returned 1`.
+- **`run_sweep_mpi.py --compression none`**. Parallel HDF5 cannot do
+  independent writes through a filter pipeline; uncompressed is
+  cheaper than the post-job compact step it avoids.
+
+---
+
+## B. Single-rank Shifter pipeline (legacy)
+
+End-to-end recipe for the older single-rank flow. Three changes vs.
+the base [INSTALL.md#docker](INSTALL.md#docker) Perlmutter recipe:
 
 1. **One self-contained image with the new code baked in** — instead of
    the 2-layer setup we used for the local Mac test, push a single

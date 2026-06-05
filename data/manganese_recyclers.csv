@@ -1,0 +1,18 @@
+# Curated estimate of battery-grade manganese recyclers (2024).
+# Capacity[t/yr] is contained Mn metal recoverable.
+# Battery-grade Mn recycling is nascent; most Mn in EOL Li-ion batteries
+# currently ends up in slag during pyrometallurgical recovery of Ni/Co
+# rather than being recovered as battery-grade HPMSM. The capacities
+# below are dedicated Mn-recovery streams.
+country,facility,capacity_2024[t/yr],recovery_efficiency,processing_cost
+USA,Redwood Materials NV,2500,0.85,3200
+USA,Ascend Elements Covington,2000,0.83,3300
+USA,Li-Cycle Rochester NY,1500,0.80,3500
+Canada,Li-Cycle Kingston ON,1500,0.80,3400
+Belgium,Umicore Hoboken,1800,0.86,3100
+Germany,BASF Schwarzheide,1200,0.83,3200
+Sweden,Northvolt Revolt,1500,0.82,3300
+China,GEM Jingmen,4500,0.85,2700
+China,BRUNP Foshan,4000,0.85,2700
+China,Huayou Cobalt,3000,0.84,2700
+Korea,SungEel HiTech,2000,0.85,3000

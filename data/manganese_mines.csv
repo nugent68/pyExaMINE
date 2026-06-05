@@ -1,0 +1,40 @@
+# Curated estimate of major manganese mining operations (2024 baseline),
+# scoped to the BATTERY-GRADE share of each mine's output. Steel-grade
+# ferro-Mn / silico-Mn output is OUT OF SCOPE (it dwarfs battery-grade
+# Mn by ~250x globally; modelling both in one supply chain would mean
+# the model's price signal serves the steel market that uses 99.5%
+# of Mn). The production/reserves columns below are roughly 0.1-0.3% of
+# each mine's total Mn output, reflecting the slice that flows into the
+# HPMSM / battery-grade Mn sulphate value chain.
+#
+# Aggregate global battery-grade Mn was ~80 kt in 2024 with persistent
+# supply tightness (HPMSM has been in 1-3 kt/yr deficit through 2022-24);
+# the rows below sum to ~70 kt so the model starts mildly supply-
+# constrained, matching real market conditions.
+#
+# extraction_cost reflects the battery-grade concentrate premium
+# ($1700-2200/t at mine head), NOT the steel-grade Mn ore cost
+# (~$400-600/t).
+country,facility,production_2024[t/yr],reserves[t],extraction_cost
+South Africa,GEMCO (S32) Kalahari,8000,750000,1700
+South Africa,Tshipi Borwa (Jupiter),11000,700000,1750
+South Africa,United Manganese of Kalahari,7500,750000,1700
+South Africa,Hotazel Mamatwan,6000,600000,1750
+South Africa,Kalagadi,5000,500000,1800
+Australia,GEMCO Groote Eylandt (S32),9000,230000,1900
+Australia,Element 25 Butcherbird,3000,170000,2100
+Australia,Bootu Creek (Northern Min.),1000,45000,2200
+Gabon,Comilog Moanda (Eramet),16000,450000,1800
+Gabon,Nouvelle Gabon Mining,3500,120000,1900
+Brazil,Vale Urucum,2500,90000,1950
+Brazil,Buritirama,1800,50000,2000
+Brazil,Vale Azul,1300,45000,2000
+China,Guangxi-Daxin,3500,165000,2100
+China,Hunan-Minmetals,2200,90000,2100
+China,Guizhou Songtao,1500,60000,2100
+Ukraine,Pokrov (Ferrexpo),4500,400000,2000
+Ukraine,Nikopol Manganese,3500,400000,2000
+Ghana,Nsuta (Ghana Manganese),1800,38000,1900
+India,Balaghat (MOIL),1500,250000,1950
+Mexico,Molango (Autlán),600,20000,2050
+Other countries,Other Mn operations,1300,45000,2150

@@ -46,12 +46,16 @@ sys.path.insert(0, str(_REPO_ROOT))
 from src.config.lithium_config import LITHIUM_CONFIG       # noqa: E402
 from src.config.nickel_config import NICKEL_CONFIG         # noqa: E402
 from src.config.platinum_config import PLATINUM_CONFIG     # noqa: E402
+from src.config.cobalt_config import COBALT_CONFIG         # noqa: E402
+from src.config.manganese_config import MANGANESE_CONFIG   # noqa: E402
 from src.model.supply_chain_model import MineralSupplyChainModel  # noqa: E402
 
 _BASE_CONFIGS = {
-    "lithium": LITHIUM_CONFIG,
-    "nickel":  NICKEL_CONFIG,
-    "platinum": PLATINUM_CONFIG,
+    "lithium":   LITHIUM_CONFIG,
+    "nickel":    NICKEL_CONFIG,
+    "platinum":  PLATINUM_CONFIG,
+    "cobalt":    COBALT_CONFIG,
+    "manganese": MANGANESE_CONFIG,
 }
 
 

@@ -10,3 +10,9 @@ Nickel,2050,NetZero,7000000
 Platinum,2024,baseline,250
 Platinum,2030,NetZero,350
 Platinum,2050,NetZero,600
+Cobalt,2024,baseline,230000
+Cobalt,2030,NetZero,450000
+Cobalt,2050,NetZero,700000
+Manganese,2024,baseline,80000
+Manganese,2030,NetZero,250000
+Manganese,2050,NetZero,700000

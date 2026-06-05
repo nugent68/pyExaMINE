@@ -28,7 +28,13 @@ _DATA_DIR = _PROJECT_ROOT / 'data'
 
 
 # Map "Lithium" -> "lithium" prefix used in CSV filenames.
-_PREFIX = {'Lithium': 'lithium', 'Nickel': 'nickel', 'Platinum': 'platinum'}
+_PREFIX = {
+    'Lithium':   'lithium',
+    'Nickel':    'nickel',
+    'Platinum':  'platinum',
+    'Cobalt':    'cobalt',
+    'Manganese': 'manganese',
+}
 
 
 def _read_csv(path: Path) -> pd.DataFrame:

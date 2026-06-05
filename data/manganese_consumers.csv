@@ -1,0 +1,30 @@
+# Country-level battery-grade manganese end-product consumption share
+# (2024). EV / consumer-electronics batteries; steel-grade Mn for steel
+# is excluded from this share (out of scope for the battery-supply-chain
+# model).
+country,share
+China,0.55
+USA,0.12
+Germany,0.05
+Korea,0.04
+Japan,0.04
+France,0.025
+UK,0.02
+Norway,0.02
+Italy,0.02
+Spain,0.015
+Netherlands,0.015
+Belgium,0.01
+India,0.01
+Canada,0.01
+Sweden,0.01
+Australia,0.01
+Switzerland,0.01
+Brazil,0.01
+Denmark,0.005
+Austria,0.005
+Thailand,0.005
+Mexico,0.005
+Turkey,0.005
+Indonesia,0.005
+Other countries,0.025

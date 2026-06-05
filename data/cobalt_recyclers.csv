@@ -1,0 +1,26 @@
+# Curated estimate of major cobalt recyclers (battery-scrap + black-mass).
+# Capacity[t/yr] is contained Co metal recoverable.
+# Co is the highest-value cathode mineral so recycling capacity has
+# grown faster than for Li/Mn. Most facilities recover Ni/Co/Mn
+# together; the Co-only share quoted below is the Co-recoverable slice.
+country,facility,capacity_2024[t/yr],recovery_efficiency,processing_cost
+Belgium,Umicore Hoboken,4000,0.96,5500
+Germany,BASF Schwarzheide,1500,0.92,5800
+Germany,Aurubis Hamburg,2000,0.94,5700
+USA,Redwood Materials NV,2000,0.92,5800
+USA,Li-Cycle Rochester NY,1500,0.88,6200
+USA,Ascend Elements Covington,1200,0.90,6000
+Canada,Glencore Sudbury,2500,0.94,5500
+UK,EMR Birmingham,800,0.90,6000
+Sweden,Northvolt Revolt,1200,0.91,5900
+Norway,Glencore Nikkelverk,1500,0.93,5500
+Finland,Nornickel Harjavalta,1800,0.93,5400
+China,GEM Jingmen,5000,0.92,4800
+China,BRUNP Foshan,4500,0.92,4800
+China,Huayou Cobalt,4000,0.92,4800
+China,Ganzhou Bangpu,2500,0.91,4900
+China,Highpower Recycling,2000,0.90,4900
+Korea,SungEel HiTech Gunsan,1800,0.93,5600
+Korea,POSCO Recycling,1500,0.93,5600
+Japan,Sumitomo Recycling,1500,0.94,5800
+Japan,JX Nippon Mining,1000,0.93,5800
