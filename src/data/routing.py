@@ -50,6 +50,7 @@ COUNTRY_REGION = {
     # Oceania
     'Australia': 'Oceania',
     'New Caledonia': 'Oceania',
+    'Papua New Guinea': 'Oceania',
     # AmericasPacific (West coast access)
     'USA': 'AmericasPacific',
     'Canada': 'AmericasPacific',
@@ -80,6 +81,9 @@ COUNTRY_REGION = {
     'South Africa': 'AfricaSouth',
     'Zimbabwe': 'AfricaSouth',
     'Madagascar': 'AfricaSouth',
+    # Katanga copperbelt cobalt exports via the southern corridor
+    # (Durban / Dar es Salaam); 76% of world Co per USGS MCS 2025.
+    'DRC': 'AfricaSouth',
     # MiddleEast
     'Saudi Arabia': 'MiddleEast',
     'UAE': 'MiddleEast',

@@ -1096,18 +1096,29 @@ grade Mn is the lowest-value cathode mineral and dedicated Mn
 recovery is nascent — most Mn in EOL packs ends up in slag during
 pyrometallurgical Ni/Co recovery.
 
+Cobalt and manganese mine data (`data/cobalt_mines.csv`,
+`data/manganese_mines.csv`) are anchored to the **USGS Mineral
+Commodity Summaries 2025** "World Mine Production and Reserves" tables:
+country-level production and reserves match USGS exactly for cobalt
+(2024e world 290 kt / 11 Mt; DRC 220 kt / 6 Mt, ≈ 27-yr reserve life),
+and for manganese the USGS country *shares* and per-country reserve
+lives (e.g. Gabon ≈ 13 yr, South Africa ≈ 76 yr) are applied to the
+battery-grade slice. Within-country facility splits and extraction
+costs remain analyst estimates; see the CSV headers for the full
+derivation and source URLs.
+
 ## Agent counts (worldwide model, default `agents_per_gdp_billion = 500`)
 
 | Agent type        | Lithium | Nickel | Cobalt | Manganese | Platinum |
 |-------------------|--------:|-------:|-------:|----------:|---------:|
-| MineAgent         |   30    |   29   |   22   |   22      |   18     |
+| MineAgent         |   30    |   29   |   28   |   23      |   18     |
 | ProcessorAgent    |   25    |   28   |   22   |   20      |   11     |
 | RecyclingAgent    |   20    |   25   |   20   |   11      |   15     |
-| ManufacturerAgent |  142    |  146   |  150   |  150      |  152     |
+| ManufacturerAgent |  142    |  146   |  150   |  145      |  152     |
 | RetailerAgent     |  175    |  178   |  175   |  175      |  178     |
 | ConsumerAgent     |  175    |  178   |  175   |  175      |  178     |
 | TransportAgent    |   85    |   85   |   85   |   85      |   85     |
-| **Total**         | **652** | **669** | **649** | **638**  | **637**  |
+| **Total**         | **652** | **669** | **655** | **634**  | **637**  |
 
 Mines, processors, and recyclers come from the per-facility CSVs in
 `data/`. Manufacturer / retailer / consumer counts come from

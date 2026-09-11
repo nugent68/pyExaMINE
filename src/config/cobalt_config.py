@@ -23,8 +23,12 @@ COBALT_CONFIG = {
     "mineral_type": "Cobalt",
 
     # Fallback annual mineral demand (tonnes/year) used only if the USGS
-    # demand column for this mineral is absent. Global mined Co 2024 was
-    # ~230 kt with battery sector taking ~70%.
+    # demand column for this mineral is absent. USGS MCS 2025 puts 2024
+    # world MINE production at ~290 kt (Co content; DRC 76%, Indonesia
+    # 10%) and describes 2024 as a year of excess supply and falling
+    # prices. Refined-cobalt DEMAND ran below mine supply, ~230 kt
+    # (battery sector ~70%). Keeping demand < mine supply here
+    # reproduces the 2024 surplus USGS reports.
     "default_annual_demand_tons": 230000.0,
 
     # Price parameters ($/ton). Cobalt has been volatile: the 2018 peak
