@@ -60,11 +60,12 @@ COUNTRIES_BY_MINERAL: dict[str, list[str]] = {
     ],
     "cobalt": [
         "Australia", "Canada", "Cuba", "DRC", "Indonesia", "Madagascar",
-        "Other countries", "Philippines", "Russia",
+        "New Caledonia", "Other countries", "Papua New Guinea",
+        "Philippines", "Russia", "Turkey", "USA",
     ],
     "manganese": [
-        "Australia", "Brazil", "China", "Gabon", "Ghana", "India",
-        "Mexico", "Other countries", "South Africa", "Ukraine",
+        "Australia", "Brazil", "China", "Cote d'Ivoire", "Gabon", "Ghana",
+        "India", "Malaysia", "Other countries", "South Africa",
     ],
 }
 
