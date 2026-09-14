@@ -58,12 +58,12 @@ import h5py
 import numpy as np
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from src.config.lithium_config import LITHIUM_CONFIG       # noqa: E402
-from src.config.nickel_config import NICKEL_CONFIG         # noqa: E402
-from src.config.platinum_config import PLATINUM_CONFIG     # noqa: E402
-from src.model.supply_chain_model import MineralSupplyChainModel  # noqa: E402
+from pyexamine.config.lithium_config import LITHIUM_CONFIG       # noqa: E402
+from pyexamine.config.nickel_config import NICKEL_CONFIG         # noqa: E402
+from pyexamine.config.platinum_config import PLATINUM_CONFIG     # noqa: E402
+from pyexamine.model.supply_chain_model import MineralSupplyChainModel  # noqa: E402
 
 _BASE_CONFIGS = {
     "lithium":  LITHIUM_CONFIG,

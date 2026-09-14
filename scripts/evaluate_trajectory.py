@@ -47,12 +47,12 @@ import pandas as pd
 import torch
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from src.surrogate import features as ft               # noqa: E402
-from src.surrogate import predict as sp                # noqa: E402
-from src.trajectory import deeponet as dn              # noqa: E402
-from src.trajectory import eval as te                  # noqa: E402
+from pyexamine.surrogate import features as ft               # noqa: E402
+from pyexamine.surrogate import predict as sp                # noqa: E402
+from pyexamine.trajectory import deeponet as dn              # noqa: E402
+from pyexamine.trajectory import eval as te                  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:

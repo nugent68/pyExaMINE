@@ -26,20 +26,20 @@ from pathlib import Path
 
 # Make `src` importable when run directly.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 # Per-seed run CSVs land here (gitignored). Committed ensemble outputs
 # (summary CSV + band PNG) stay in outputs/. Keeps the visible
 # repository tidy even when N=20 produces hundreds of large CSVs.
 _ENSEMBLE_RUN_DIR = _REPO_ROOT / 'ensemble_runs'
 
-from src.config.lithium_config import LITHIUM_CONFIG
-from src.config.nickel_config import NICKEL_CONFIG
-from src.config.platinum_config import PLATINUM_CONFIG
-from src.config.cobalt_config import COBALT_CONFIG
-from src.config.manganese_config import MANGANESE_CONFIG
-from src.model.supply_chain_model import MineralSupplyChainModel
-from src.visualization.visualizer import (
+from pyexamine.config.lithium_config import LITHIUM_CONFIG
+from pyexamine.config.nickel_config import NICKEL_CONFIG
+from pyexamine.config.platinum_config import PLATINUM_CONFIG
+from pyexamine.config.cobalt_config import COBALT_CONFIG
+from pyexamine.config.manganese_config import MANGANESE_CONFIG
+from pyexamine.model.supply_chain_model import MineralSupplyChainModel
+from pyexamine.visualization.visualizer import (
     create_summary_statistics,
     plot_supply_chain_analysis,
     save_summary_statistics,

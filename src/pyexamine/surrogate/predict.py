@@ -5,7 +5,7 @@ Two ways to use:
 * **As a Python API.** Load a bundle once, call ``predict`` on
   scenario dicts:
 
-  >>> from src.surrogate.predict import load_models, predict
+  >>> from pyexamine.surrogate.predict import load_models, predict
   >>> models = load_models("surrogate_models/")
   >>> predict({"mineral": "lithium",
   ...          "embargoes": [{"country": "Chile",

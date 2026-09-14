@@ -40,10 +40,10 @@ import torch
 from torch.utils.data import DataLoader
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from src.surrogate import features as ft        # noqa: E402
-from src.trajectory import (                     # noqa: E402
+from pyexamine.surrogate import features as ft        # noqa: E402
+from pyexamine.trajectory import (                     # noqa: E402
     dataset as td,
     deeponet as dn,
 )
@@ -225,11 +225,11 @@ def _train_one_mineral(args, mineral: str, device: torch.device) -> None:
 
     hybrid_config: dict = {}
     if with_hybrid:
-        from src.trajectory import hybrid as hb     # local import
+        from pyexamine.trajectory import hybrid as hb     # local import
         hybrid_config = hb.hybrid_config_for_variant(mineral, args.hybrid_variant)
     fno_config: dict = {}
     if with_fno:
-        from src.trajectory import fno as fno_mod   # local import
+        from pyexamine.trajectory import fno as fno_mod   # local import
         fno_config = fno_mod.fno_config_for_variant(
             mineral, feature_dim=feat_dim, variant=args.fno_variant,
         )

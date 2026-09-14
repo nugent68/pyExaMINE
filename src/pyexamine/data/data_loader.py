@@ -22,9 +22,18 @@ from typing import Dict, List, Tuple
 import pandas as pd
 
 
-# Project root: this file is .../src/data/data_loader.py
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_DATA_DIR = _PROJECT_ROOT / 'data'
+# Where the CSVs live depends on how pyexamine was installed:
+#   * from a checkout (uv sync / pip install -e .): this file is
+#     <repo>/src/pyexamine/data/data_loader.py and the CSVs are in
+#     <repo>/data/ -- the canonical, version-controlled copy.
+#   * from a built wheel (pip install pyexamine / git+https://...):
+#     the wheel build copies <repo>/data/ to pyexamine/data/bundled/
+#     (see [tool.hatch.build.targets.wheel.force-include] in
+#     pyproject.toml), so the CSVs sit next to this file.
+_HERE = Path(__file__).resolve().parent
+_BUNDLED_DATA_DIR = _HERE / 'bundled'
+_CHECKOUT_DATA_DIR = _HERE.parents[2] / 'data'
+_DATA_DIR = _BUNDLED_DATA_DIR if _BUNDLED_DATA_DIR.is_dir() else _CHECKOUT_DATA_DIR
 
 
 # Map "Lithium" -> "lithium" prefix used in CSV filenames.

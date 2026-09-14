@@ -97,7 +97,7 @@ CONFIG_KNOBS: list[tuple[str, float, float]] = [
 ]
 
 #: Reasonable defaults to fill in when a scenario doesn't override a knob.
-#: Values match the per-mineral configs in src/config/.
+#: Values match the per-mineral configs in src/pyexamine/config/.
 DEFAULT_CONFIG_KNOBS: dict[str, float] = {
     "geopolitical_event_probability": 0.01,
     "mine_disruption_probability":    0.02,

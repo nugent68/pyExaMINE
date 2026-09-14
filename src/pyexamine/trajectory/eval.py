@@ -43,8 +43,8 @@ from typing import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-from src.surrogate import features as ft
-from src.surrogate import targets as tg
+from pyexamine.surrogate import features as ft
+from pyexamine.surrogate import targets as tg
 
 
 #: Scalar targets the trajectory surrogate can derive from a pure

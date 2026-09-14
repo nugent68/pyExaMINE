@@ -147,8 +147,8 @@ docker push nugent68/pyexamine:us-policy
 
 Notes:
 - The standard `Dockerfile` already `COPY . .`s the entire worktree
-  in, so the new `src/config/overrides.py`,
-  `src/agents/strategic_reserve_agent.py`, the modified agents, and the
+  in, so the new `src/pyexamine/config/overrides.py`,
+  `src/pyexamine/agents/strategic_reserve_agent.py`, the modified agents, and the
   `policies/` directory are baked in automatically — there's no
   separate `Dockerfile.us-policy` to maintain on Perlmutter.
 - If you maintain your own registry, replace `nugent68/...` with your
@@ -280,7 +280,7 @@ small seed counts; run 20+ seeds before reading anything off the peaks.
 - **Different scenarios**: change `--embargo-start` / `--embargo-duration`,
   or pass `--no-embargo` for a baseline arm with no shock.
 - **New policies**: drop another JSON into `policies/` and add it to
-  `--policies`. Look at `src/config/overrides.py:RECOGNISED_OVERRIDE_KEYS`
+  `--policies`. Look at `src/pyexamine/config/overrides.py:RECOGNISED_OVERRIDE_KEYS`
   for the full list of tunable knobs.
 - **Worker count**: `N_WORKERS=128 sbatch scripts/perlmutter_policy_sweep.slurm`
   uses the whole node for scenario parallelism (no threading

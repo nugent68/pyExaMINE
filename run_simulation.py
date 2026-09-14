@@ -13,17 +13,17 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from src.model.supply_chain_model import MineralSupplyChainModel
-from src.visualization.visualizer import (
+from pyexamine.model.supply_chain_model import MineralSupplyChainModel
+from pyexamine.visualization.visualizer import (
     plot_supply_chain_analysis,
     create_summary_statistics,
     save_summary_statistics
 )
-from src.config.lithium_config import LITHIUM_CONFIG
-from src.config.nickel_config import NICKEL_CONFIG
-from src.config.platinum_config import PLATINUM_CONFIG
-from src.config.cobalt_config import COBALT_CONFIG
-from src.config.manganese_config import MANGANESE_CONFIG
+from pyexamine.config.lithium_config import LITHIUM_CONFIG
+from pyexamine.config.nickel_config import NICKEL_CONFIG
+from pyexamine.config.platinum_config import PLATINUM_CONFIG
+from pyexamine.config.cobalt_config import COBALT_CONFIG
+from pyexamine.config.manganese_config import MANGANESE_CONFIG
 
 
 def parse_arguments():
@@ -105,7 +105,7 @@ def parse_arguments():
         help=(
             'Path to a JSON file of US policy parameters. Loaded into '
             'config["country_overrides"]["USA"] and consulted at agent '
-            'init for any key in src/config/overrides.py. Supports '
+            'init for any key in src/pyexamine/config/overrides.py. Supports '
             'scalar agent knobs (e.g. retailer_reorder_point_multiplier), '
             'a "strategic_reserve" block to instantiate a US '
             'StrategicReserveAgent, and "procurement_avoid_countries" / '

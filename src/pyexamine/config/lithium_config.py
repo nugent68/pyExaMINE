@@ -21,7 +21,7 @@ LITHIUM_CONFIG = {
     "price_floor": 3000,       # ~18% of initial; soft floor anchors at cheapest cost.
     "price_ceiling": 200000,   # ~12x initial; lets a true crisis show as a level.
 
-    # Cost-anchored price model knobs (see src/model/market_mechanism.py).
+    # Cost-anchored price model knobs (see src/pyexamine/model/market_mechanism.py).
     "price_elasticity": 0.25,           # move per unit log(supply/demand)
     "price_max_step_pct": 0.08,          # cap on per-step move
     "price_anchor_strength": 0.10,       # log-pull toward marginal cost
@@ -36,7 +36,7 @@ LITHIUM_CONFIG = {
     # Per-mode transport unit costs ($/ton; used by transport agent
     # cost field for diagnostics). Mine / processor / recycler / route
     # parameters all live in the per-facility CSVs (data/lithium_*.csv)
-    # and the global route table (src/data/routing.py); only knobs
+    # and the global route table (src/pyexamine/data/routing.py); only knobs
     # that aren't per-facility are tracked here.
     "transport_cost_ship": 10,
     "transport_cost_rail": 25,
@@ -161,7 +161,7 @@ LITHIUM_CONFIG = {
     # country_overrides["USA"] with any combination of:
     #   - Scalar agent knobs (e.g. "retailer_reorder_point_multiplier")
     #     to retune US-specific behaviour (see
-    #     src/config/overrides.py:RECOGNISED_OVERRIDE_KEYS for the
+    #     src/pyexamine/config/overrides.py:RECOGNISED_OVERRIDE_KEYS for the
     #     full list of tunable keys).
     #   - "strategic_reserve" dict that instantiates a
     #     StrategicReserveAgent in the model.

@@ -12,7 +12,7 @@
 #
 # What gets swept:
 #   3 minerals (Li, Ni, Pt) x N variants (one per HYBRID_VARIANTS entry
-#   in src/trajectory/hybrid.py) = 24 runs at the default knob set.
+#   in src/pyexamine/trajectory/hybrid.py) = 24 runs at the default knob set.
 #   12 nodes x 2 tasks per node = 24 simultaneous runs.
 #
 # Why 2 tasks per node and not 3 (and not 1 either):
@@ -52,7 +52,7 @@ set -euo pipefail
 : "${MINERALS:=lithium nickel platinum}"
 
 # Variant list -- mirrors the keys of HYBRID_VARIANTS in
-# src/trajectory/hybrid.py.  Override at submit time with
+# src/pyexamine/trajectory/hybrid.py.  Override at submit time with
 # --export=VARIANTS="default impulse_256x2".
 : "${VARIANTS:=default impulse_256x2 impulse_512x2 impulse_256x3 embed_32 embed_64 baseline_basis_128 all_larger}"
 
