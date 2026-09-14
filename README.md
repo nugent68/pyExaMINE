@@ -489,6 +489,30 @@ Robust signals like `big3_li_5yr` come back at `+70 % ± 5 %` — a
 clean, high-significance deviation. N=20 tightens those bands
 further.
 
+### Reproducibility: within a platform, not across
+
+A given seed is bit-reproducible on a given machine, but **not across
+CPU architectures**. Measured on the 500-step lithium baseline
+(seed 42), Apple Silicon (arm64) vs Intel (x86_64) runs are
+bit-identical for the first 84 steps; at step 85 the price differs by
+one ULP (3.5 × 10⁻¹⁶ relative — FMA contraction and libm `exp`/`log`
+last-bit rounding differ between the two), and by step 125 that
+perturbation has tipped a threshold comparison that gates an RNG
+draw, after which the two runs are effectively different seeds
+(final price $22.3k vs $16.8k; cumulative unfulfilled differs by
+5.8 %). Mass balance is clean on both, so neither run is wrong — this
+is ordinary chaotic-ABM sensitivity, and forcing cross-architecture
+bit-reproducibility (disabling FMA, pinning libm) is not worth the
+cost.
+
+The practical rule: **compare ensemble means across machines, never
+single trajectories.** A 5.8 % single-seed cross-architecture
+difference is the same magnitude as seed-to-seed noise, which is
+exactly what the N-seed ensembles above average over; the published
+Stage 2/3 findings (−40 %, +37 % effects, 20-seed means) are
+unaffected. All published sweeps ran on Perlmutter (x86_64 Linux) and
+reproduce there.
+
 ### Run a Political Embargo Scenario
 
 The `--embargo` flag schedules an export embargo: a country withholds its
