@@ -92,8 +92,8 @@ esac
 : "${ARCH:=hybrid}"
 
 # Variant list.  For ARCH=hybrid these mirror HYBRID_VARIANTS in
-# src/trajectory/hybrid.py.  For ARCH=fno they mirror FNO_VARIANTS in
-# src/trajectory/fno.py.  ARCH=deeponet ignores variants (pass any
+# src/pyexamine/trajectory/hybrid.py.  For ARCH=fno they mirror FNO_VARIANTS in
+# src/pyexamine/trajectory/fno.py.  ARCH=deeponet ignores variants (pass any
 # non-empty value, e.g. "default").
 case "${ARCH}" in
     hybrid)

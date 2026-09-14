@@ -46,7 +46,7 @@ done
 ## Loading
 
 ```python
-from src.surrogate.predict import load_models, predict
+from pyexamine.surrogate.predict import load_models, predict
 
 # Point bundle: returns <target>_mean + <target>_std.
 pt = load_models("surrogate_models/", kind="point")

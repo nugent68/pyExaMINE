@@ -57,10 +57,55 @@ already have one; you do not need to install Python separately.
 ## Verify installation
 
 ```bash
-uv run python -c "import mesa; print(f'Mesa version: {mesa.__version__}')"
+uv run python -c "import pyexamine, mesa; print(pyexamine.__version__, mesa.__version__)"
 ```
 
-Expected output: `Mesa version: 2.4.x` (or any 2.x release).
+Expected output: `0.1.0 2.4.x` (or any Mesa 2.x release).
+
+## Installing pyExaMINE as a package (no checkout)
+
+`uv sync` above installs the project into `.venv/` in editable mode, so
+`import pyexamine` works and edits to `src/pyexamine/` take effect
+immediately. If you only want to *use* the model from your own code,
+you can install it straight from GitHub instead of cloning:
+
+```bash
+# Pin to a tagged release (recommended -- stable, reproducible):
+pip install "git+https://github.com/nugent68/pyExaMINE.git@v0.1.0"
+
+# Or track main:
+pip install "git+https://github.com/nugent68/pyExaMINE.git"
+
+# With the optional torch-based trajectory surrogate:
+pip install "pyexamine[trajectory] @ git+https://github.com/nugent68/pyExaMINE.git@v0.1.0"
+```
+
+Pre-built wheels are also attached to each
+[GitHub release](https://github.com/nugent68/pyExaMINE/releases) and
+can be installed with `pip install pyexamine-<version>-py3-none-any.whl`.
+
+The package uses a `src/` layout and installs under a single stable
+namespace:
+
+```python
+from pyexamine.model.supply_chain_model import MineralSupplyChainModel
+from pyexamine.config.lithium_config import LITHIUM_CONFIG
+
+model = MineralSupplyChainModel(LITHIUM_CONFIG)
+for _ in range(200):
+    model.step()
+```
+
+The per-facility CSVs in `data/` are bundled into the wheel
+(`pyexamine/data/bundled/`), so an installed copy needs no access to
+the repository. To point the loader at a different data directory,
+set `MINERAL_DATA_DIR=/path/to/csvs`.
+
+To build the wheel and sdist yourself:
+
+```bash
+uv build            # -> dist/pyexamine-<version>-py3-none-any.whl + .tar.gz
+```
 
 ## Command-line options
 
@@ -138,7 +183,7 @@ uv add pyqt5
 ```
 
 **Out of memory on long runs**
-Reduce `--steps` or the agent counts in `src/config/{mineral}_config.py`.
+Reduce `--steps` or the agent counts in `src/pyexamine/config/{mineral}_config.py`.
 
 **Simulation runs but produces no output**
 Confirm `USGS_CMM.csv` is in the project root.
@@ -152,6 +197,7 @@ works with stock Python and a regular `requirements.txt`:
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pip install -e . --no-deps     # makes `import pyexamine` work in the venv
 python run_simulation.py --all --steps 200
 ```
 
@@ -160,6 +206,11 @@ simulation; `uv run` exists specifically to remove that step. Note
 that `requirements.txt` is a *mirror* of the canonical `pyproject.toml`
 declarations — if you want pinned versions identical to the lock,
 prefer the uv flow.
+
+`run_simulation.py` and the `scripts/*.py` entry points also put
+`src/` on `sys.path` themselves, so they run from a checkout even
+without the `pip install -e .` step; it is only needed if you want to
+`import pyexamine` from your own code or notebooks.
 
 ## Development setup
 
@@ -270,7 +321,7 @@ single 128-core CPU node in 3-5 minutes; results land in
 
 1. Read the [Architecture Plan](plans/architecture_plan.md) for technical details.
 2. See the [Quick Reference](plans/quick_reference.md) for agent behaviors.
-3. Modify config files in `src/config/` to test different scenarios.
+3. Modify config files in `src/pyexamine/config/` to test different scenarios.
 4. Extend the model with additional features.
 
 ## Getting help

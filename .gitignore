@@ -83,3 +83,11 @@ scenarios/sweep_*.json
 Dockerfile.mpi
 Dockerfile.mpi-v2
 Dockerfile.mpi-v3
+
+# Build artefacts from `uv build` / `python -m build`. The wheel build
+# also materialises a copy of data/ at src/pyexamine/data/bundled/ only
+# inside the wheel, never in the tree -- but ignore it defensively.
+dist/
+build/
+*.egg-info/
+src/pyexamine/data/bundled/

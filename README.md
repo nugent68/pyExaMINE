@@ -109,7 +109,7 @@ the per-country shipping/rail/truck fleet.
   shipments still arrive (ore stockpiles at the gate, matching real
   smelter outage behaviour).
 - **TransportAgent** - Real shipment pipeline with route-specific
-  lead times (chosen by `src/data/routing.py` per O-D pair, not by
+  lead times (chosen by `src/pyexamine/data/routing.py` per O-D pair, not by
   the agent — typically ship for cross-region, rail for overland
   Asia↔Europe). Disrupted jurisdictions delay any shipment touching
   them and self-clear when the geopolitical window ends. **Deferral
@@ -230,7 +230,7 @@ the per-country shipping/rail/truck fleet.
 - **Real Transport Pipeline with Routing** - Every cross-border
   shipment (mine→processor, processor→manufacturer,
   manufacturer→retailer, and recycler→processor) is routed through
-  `src/data/routing.py`'s region-pair table. Each O-D pair has a
+  `src/pyexamine/data/routing.py`'s region-pair table. Each O-D pair has a
   primary route (chokepoints traversed + lead-time weeks + mode) and
   zero or more alternates. The dispatcher picks the first open route
   at acceptance time; if a chokepoint closes mid-transit, delivery
@@ -330,11 +330,11 @@ pyExaMINE/
 │   ├── transport_fleet.csv            # per-country ship/rail/truck fleet
 │   ├── country_gdp.csv                # top-30 nominal GDP (drives agent fan-out)
 │   └── demand.csv                     # global annual demand by year/scenario
-├── pyproject.toml                     # uv project metadata
+├── pyproject.toml                     # Package metadata + hatchling build config
 ├── uv.lock                            # Pinned dependency graph (committed)
 ├── requirements.txt                   # Legacy mirror for non-uv users
 ├── plans/                             # Architecture documentation
-├── src/                               # Source code
+├── src/pyexamine/                     # The installable `pyexamine` package
 │   ├── agents/                        # Agent implementations (all labelled)
 │   │   ├── mine_agent.py              # .country, .facility, .label
 │   │   ├── processor_agent.py
@@ -351,6 +351,7 @@ pyExaMINE/
 │   │   └── routing.py                 # region-pair routing + chokepoints
 │   ├── visualization/
 │   │   └── visualizer.py
+│   ├── surrogate/, trajectory/        # Scalar + trajectory surrogate models
 │   └── config/                        # Mineral-specific tunables
 │       ├── lithium_config.py
 │       ├── nickel_config.py
@@ -397,6 +398,22 @@ uv sync
 See [INSTALL.md](INSTALL.md) for the legacy `python -m venv venv` path
 (uses `requirements.txt`, kept in sync with `pyproject.toml`) if you
 cannot use uv.
+
+To use the model from your own code without a checkout, install it as
+a package pinned to a tagged release:
+
+```bash
+pip install "git+https://github.com/nugent68/pyExaMINE.git@v0.1.0"
+```
+
+```python
+from pyexamine.model.supply_chain_model import MineralSupplyChainModel
+from pyexamine.config.lithium_config import LITHIUM_CONFIG
+```
+
+Wheels are attached to each [GitHub release](https://github.com/nugent68/pyExaMINE/releases);
+see [INSTALL.md](INSTALL.md#installing-pyexamine-as-a-package-no-checkout)
+for details.
 
 **Requirements:**
 - uv (installs Python interpreter on demand)
@@ -559,7 +576,7 @@ uv run python run_simulation.py --mineral platinum --steps 1248 --seed 42 \
 
 Known chokepoints: `Strait of Hormuz`, `Suez Canal`, `Malacca Strait`,
 `Panama Canal`, `Cape of Good Hope`. The country/route mappings live in
-`src/data/routing.py`. You can also schedule these in config:
+`src/pyexamine/data/routing.py`. You can also schedule these in config:
 
 ```python
 "political_embargoes": [
@@ -591,13 +608,13 @@ uv run python run_simulation.py --mineral lithium --steps 1352 --seed 42 \
     --us-policy policies/us_strategic_reserve.json
 ```
 
-What a policy can override (see `src/config/overrides.py:RECOGNISED_OVERRIDE_KEYS`):
+What a policy can override (see `src/pyexamine/config/overrides.py:RECOGNISED_OVERRIDE_KEYS`):
 - **Scalar agent knobs.** Any `_cfg_*` heuristic — retailer reorder /
   order multipliers, mine mothball / expansion / capacity-growth
   thresholds, processor inventory caps, manufacturer substitution
   trigger / rate / max, consumer demand-threshold multiplier, etc.
 - **`strategic_reserve` dict.** Instantiates a `StrategicReserveAgent`
-  (`src/agents/strategic_reserve_agent.py`) — buys from local
+  (`src/pyexamine/agents/strategic_reserve_agent.py`) — buys from local
   processors when `current_price < buy_below_price` and reserve
   below `capacity`, releases into local manufacturers when
   `current_price > release_above_price` OR an embargo is active
@@ -1200,7 +1217,7 @@ within-country population.
 | `price_anchor_strength` | 0.10 | Per-step log-pull toward marginal cost. 0.10 closes ~10 % of the log-gap each step. |
 | `price_ceiling_mc_multiple` | 8.0 | Soft ceiling = N × marginal cost. Lets a true crisis show as a price level proportional to the cost curve. |
 | `price_floor_cost_fraction` | 0.6 | Soft floor = f × cheapest-active extraction cost. Allows brief dips below cash cost but bounds them. |
-| `transport_max_deferral_steps` | 26 (~6 mo) | Max steps a single shipment can be deferred behind a closed chokepoint or disrupted corridor. After this, the shipment is dropped and its mineral content booked to `Lost_In_Transit_Mineral` (so a permanently-closed chokepoint doesn't accumulate cargo indefinitely). Per-shipment lead times come from `src/data/routing.py`'s route table, not from config. |
+| `transport_max_deferral_steps` | 26 (~6 mo) | Max steps a single shipment can be deferred behind a closed chokepoint or disrupted corridor. After this, the shipment is dropped and its mineral content booked to `Lost_In_Transit_Mineral` (so a permanently-closed chokepoint doesn't accumulate cargo indefinitely). Per-shipment lead times come from `src/pyexamine/data/routing.py`'s route table, not from config. |
 | `geopolitical_processor_event_share` | 0.30 | Probability that a random geopolitical event hits the refining tier (smelter / refinery outage) instead of the mining tier. Disrupted processors skip purchasing / processing / selling for the duration; inbound shipments still arrive (ore stockpiles at the gate). |
 | `consumer_product_base_price` | $40k Li/Ni, $30k Pt | Non-mineral component of finished-product price. Consumer elasticity is applied to (base + intensity × mineral_price), not the bare mineral price -- so a 50 % mineral spike adds <1 % to the perceived product price for Li/Ni and the demand response is modest, matching how end consumers actually react to upstream commodity moves. |
 | `demand_scenario` | `NetZero` | Which scenario column in `data/demand.csv` to interpolate against between the 2024 baseline row and any future-year rows. |
@@ -1219,11 +1236,11 @@ Contributions are welcome! Areas for extension:
   CSVs in `data/` (`<mineral>_mines.csv`, `_processors.csv`,
   `_recyclers.csv`, `_manufacturers.csv`, `_consumers.csv`), append the
   global demand to `data/demand.csv`, register the mineral prefix in
-  `src/data/data_loader.py:_PREFIX`, and add a `<mineral>_config.py`.
+  `src/pyexamine/data/data_loader.py:_PREFIX`, and add a `<mineral>_config.py`.
 - Refine the curated facility data (capacity, cost, recovery efficiency)
   from primary sources (USGS Minerals Yearbook, IEA, S&P).
 - Add new chokepoints (Bab el-Mandeb, Bosporus, Danish Straits, etc.)
-  to `src/data/routing.py:CHOKEPOINTS` and the route table.
+  to `src/pyexamine/data/routing.py:CHOKEPOINTS` and the route table.
 - Per-jurisdiction risk weights for random geopolitical events
   (currently uniform across producing countries).
 - Trade-policy scenarios (tariffs, export quotas, friend-shoring)

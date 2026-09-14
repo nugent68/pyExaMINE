@@ -6,7 +6,7 @@ This document outlines the step-by-step implementation plan for the Critical Min
 ## Phase 1: Foundation (4 files)
 
 ### 1.1 Data Loading Module
-**File**: `src/data/data_loader.py`
+**File**: `src/pyexamine/data/data_loader.py`
 **Dependencies**: pandas, numpy
 **Complexity**: Low
 **Key Functions**:
@@ -21,13 +21,13 @@ This document outlines the step-by-step implementation plan for the Critical Min
 - Check for missing/NaN values
 
 ### 1.2 Configuration Module
-**Files**: `src/config/lithium_config.py`, `nickel_config.py`, `platinum_config.py`
+**Files**: `src/pyexamine/config/lithium_config.py`, `nickel_config.py`, `platinum_config.py`
 **Dependencies**: None
 **Complexity**: Low
 **Structure**: Python dictionaries with all model parameters
 
 ### 1.3 Market Mechanism
-**File**: `src/model/market_mechanism.py`
+**File**: `src/pyexamine/model/market_mechanism.py`
 **Dependencies**: None (pure Python logic)
 **Complexity**: Low
 **Key Functions**:
@@ -47,7 +47,7 @@ touch src/{agents,model,data,visualization,config}/__init__.py
 ## Phase 2: Agent Implementation (7 files)
 
 ### 2.1 MineAgent
-**File**: `src/agents/mine_agent.py`
+**File**: `src/pyexamine/agents/mine_agent.py`
 **Dependencies**: mesa.Agent
 **Complexity**: Medium
 **Key Methods**:
@@ -63,7 +63,7 @@ touch src/{agents,model,data,visualization,config}/__init__.py
 - Affected by model.geopolitical_events
 
 ### 2.2 ProcessorAgent
-**File**: `src/agents/processor_agent.py`
+**File**: `src/pyexamine/agents/processor_agent.py`
 **Dependencies**: mesa.Agent
 **Complexity**: Medium
 **Key Methods**:
@@ -80,7 +80,7 @@ touch src/{agents,model,data,visualization,config}/__init__.py
 - Inventory feeds into market price mechanism
 
 ### 2.3 TransportAgent
-**File**: `src/agents/transport_agent.py`
+**File**: `src/pyexamine/agents/transport_agent.py`
 **Dependencies**: mesa.Agent, collections.deque
 **Complexity**: Medium-High
 **Key Methods**:
@@ -105,7 +105,7 @@ in_transit = [
 - Affected by geopolitical events
 
 ### 2.4 ManufacturerAgent
-**File**: `src/agents/manufacturer_agent.py`
+**File**: `src/pyexamine/agents/manufacturer_agent.py`
 **Dependencies**: mesa.Agent
 **Complexity**: Medium
 **Key Methods**:
@@ -130,7 +130,7 @@ if high_price_counter > 10:
 - Drives substitution effect
 
 ### 2.5 RetailerAgent
-**File**: `src/agents/retailer_agent.py`
+**File**: `src/pyexamine/agents/retailer_agent.py`
 **Dependencies**: mesa.Agent
 **Complexity**: Low-Medium
 **Key Methods**:
@@ -147,7 +147,7 @@ if high_price_counter > 10:
 - Tracks stockouts
 
 ### 2.6 ConsumerAgent
-**File**: `src/agents/consumer_agent.py`
+**File**: `src/pyexamine/agents/consumer_agent.py`
 **Dependencies**: mesa.Agent, numpy (for log calculation)
 **Complexity**: Low-Medium
 **Key Methods**:
@@ -169,7 +169,7 @@ current_demand = base_demand * (1 + price_effect)
 - Drives overall demand
 
 ### 2.7 RecyclingAgent
-**File**: `src/agents/recycling_agent.py`
+**File**: `src/pyexamine/agents/recycling_agent.py`
 **Dependencies**: mesa.Agent
 **Complexity**: Medium
 **Key Methods**:
@@ -188,7 +188,7 @@ current_demand = base_demand * (1 + price_effect)
 ## Phase 3: Model Assembly (2 files)
 
 ### 3.1 Supply Chain Model
-**File**: `src/model/supply_chain_model.py`
+**File**: `src/pyexamine/model/supply_chain_model.py`
 **Dependencies**: mesa.Model, mesa.time.RandomActivation, mesa.datacollection.DataCollector
 **Complexity**: High
 **Key Methods**:
@@ -237,7 +237,7 @@ model_reporters = {
 ## Phase 4: Visualization & Execution (2 files)
 
 ### 4.1 Visualizer
-**File**: `src/visualization/visualizer.py`
+**File**: `src/pyexamine/visualization/visualizer.py`
 **Dependencies**: matplotlib, seaborn, pandas
 **Complexity**: Medium
 **Key Functions**:

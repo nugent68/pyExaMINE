@@ -1,7 +1,14 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
 [project]
 name = "pyexamine"
 version = "0.1.0"
 description = "Agent-based model of critical minerals supply chains"
+readme = "README.md"
+license = "BSD-3-Clause-LBNL"
+license-files = ["LICENSE.txt"]
 authors = [
     { name = "Peter Nugent", email = "nugent68@gmail.com" }
 ]
@@ -30,4 +37,44 @@ trajectory = [
     # compatible torch.  NERSC nodes are Linux-x86_64.
     "torch>=2.0,<2.3",
     "numpy<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/nugent68/pyExaMINE"
+Repository = "https://github.com/nugent68/pyExaMINE"
+
+# ---------------------------------------------------------------------------
+# Packaging. src-layout: the importable package is src/pyexamine/, so the
+# stable import path is `pyexamine.model.supply_chain_model` etc.
+#
+#   uv sync                                  -> editable install in .venv/
+#   pip install -e .                         -> editable install
+#   pip install git+https://github.com/nugent68/pyExaMINE.git@v0.1.0
+#   uv build                                 -> dist/*.whl + dist/*.tar.gz
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyexamine"]
+
+# The per-facility CSVs are version-controlled at <repo>/data/ (the path
+# the README documents and the USGS rebuild scripts write to). Copy them
+# into the wheel so a non-editable install can find them;
+# pyexamine.data.data_loader looks in pyexamine/data/bundled/ first and
+# falls back to <repo>/data/ when running from a checkout.
+[tool.hatch.build.targets.wheel.force-include]
+"data" = "pyexamine/data/bundled"
+
+# Keep the sdist to what is needed to build + run the package. The
+# committed outputs/ tree alone is ~37 MB and belongs on GitHub, not in
+# a source distribution.
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "src/pyexamine",
+    "data",
+    "scripts",
+    "policies",
+    "run_simulation.py",
+    "pyproject.toml",
+    "README.md",
+    "INSTALL.md",
+    "LICENSE.txt",
 ]

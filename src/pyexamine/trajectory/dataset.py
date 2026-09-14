@@ -48,7 +48,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from src.surrogate import features as ft
+from pyexamine.surrogate import features as ft
 from .scenarios import CANONICAL_2050
 
 

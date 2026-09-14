@@ -40,10 +40,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from src.surrogate import features as ft         # noqa: E402
-from src.surrogate import quantile as qt         # noqa: E402
+from pyexamine.surrogate import features as ft         # noqa: E402
+from pyexamine.surrogate import quantile as qt         # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:

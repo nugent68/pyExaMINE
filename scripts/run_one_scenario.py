@@ -41,14 +41,14 @@ import time
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from src.config.lithium_config import LITHIUM_CONFIG       # noqa: E402
-from src.config.nickel_config import NICKEL_CONFIG         # noqa: E402
-from src.config.platinum_config import PLATINUM_CONFIG     # noqa: E402
-from src.config.cobalt_config import COBALT_CONFIG         # noqa: E402
-from src.config.manganese_config import MANGANESE_CONFIG   # noqa: E402
-from src.model.supply_chain_model import MineralSupplyChainModel  # noqa: E402
+from pyexamine.config.lithium_config import LITHIUM_CONFIG       # noqa: E402
+from pyexamine.config.nickel_config import NICKEL_CONFIG         # noqa: E402
+from pyexamine.config.platinum_config import PLATINUM_CONFIG     # noqa: E402
+from pyexamine.config.cobalt_config import COBALT_CONFIG         # noqa: E402
+from pyexamine.config.manganese_config import MANGANESE_CONFIG   # noqa: E402
+from pyexamine.model.supply_chain_model import MineralSupplyChainModel  # noqa: E402
 
 _BASE_CONFIGS = {
     "lithium":   LITHIUM_CONFIG,

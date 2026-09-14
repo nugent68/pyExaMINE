@@ -33,7 +33,7 @@ from typing import Sequence
 import torch
 import torch.nn as nn
 
-from src.surrogate import features as ft
+from pyexamine.surrogate import features as ft
 from .deeponet import (
     DeepONet,
     TimeEmbedding,
